@@ -33,8 +33,8 @@
 **方式 B:从源码跑(想改代码的走这条)**
 
 ```powershell
-git clone https://github.com/<你的用户名>/ds-whale-pet
-cd ds-whale-pet
+git clone https://github.com/zrmCode/DSchatpet
+cd DSchatpet
 
 py -3.11 -m venv .venv                      # live2d-py 只有 abi3 wheel,Python 必须 >= 3.11
 .venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -573,14 +573,14 @@ powershell -ExecutionPolicy Bypass -File build\build.ps1
 ### 版权
 
 ```
-Copyright (C) 2026 <在这里填你的名字或 GitHub 用户名>
+Copyright (C) 2026 zrmCode
 
 本程序是自由软件:你可以依据自由软件基金会发布的 GNU 通用公共许可证
 (第 3 版,或你选择的任何更新版本)条款重新发布和/或修改它。
 本程序希望有用,但不提供任何担保。详见 LICENSE。
 ```
 
-> 上面那行尖括号请改成你自己的名字再发布(GPL 要求保留版权声明)。
+> 想署别的名字/邮箱,改上面这一行即可(GPL 要求保留版权声明)。
 
 ---
 
