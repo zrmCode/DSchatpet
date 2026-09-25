@@ -42,7 +42,24 @@ if ($Clean) {
 Write-Host '=== 1/5 检查打包素材 ==='
 $modelDir = Join-Path $root 'assets\model'
 if (-not (Test-Path (Join-Path $modelDir '*.model3.json'))) {
-    Write-Warning "assets\model 里没有模型文件,打包后需要用户手动指定 --model-dir"
+    # 打包出来的分享包是要直接发给别人的:没有模型的话别人双击就跑不起来。
+    # 仓库里故意不含模型(版权归原作者),所以这里必须**拦住**,除非你明确知道在做什么。
+    if ($env:PET_ALLOW_NO_MODEL -eq '1') {
+        Write-Warning "assets\model 里没有模型文件(已设 PET_ALLOW_NO_MODEL=1,继续)"
+    } else {
+        Write-Host ''
+        Write-Error @"
+assets\model 里没有模型文件,不能出分享包 —— 别人拿到会跑不起来。
+
+模型不随仓库分发(版权归 B站@氵六青,无偿分享、禁止出售),
+请先按 assets\README.md 把模型放进 assets\model\(或解压 Release 里的
+_internal\assets\model\ 过来),然后重跑本脚本。
+
+只想验证打包流程、不需要能跑的包时,可以:
+    `$env:PET_ALLOW_NO_MODEL = '1'; .\build\build.ps1
+"@
+        exit 1
+    }
 } else {
     $size = [math]::Round((Get-ChildItem $modelDir -Recurse -File | Measure-Object Length -Sum).Sum / 1MB, 2)
     Write-Host ("  模型素材 OK({0} MB)" -f $size)

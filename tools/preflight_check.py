@@ -226,6 +226,15 @@ def main() -> int:
     check("分享包里备好 LGPL-3.0.txt", (share / "LGPL-3.0.txt").is_file())
     check("分享包里备好分享说明", any(share.glob("*说明*.txt")), str(list(share.glob("*.txt"))))
 
+    print("\n[7] Windows 脚本的编码陷阱(.ps1 / .iss 必须带 UTF-8 BOM)")
+    for rel in listing:
+        if not rel.endswith((".ps1", ".iss")):
+            continue
+        head = (ROOT / rel).read_bytes()[:3]
+        check(f"{rel} 带 UTF-8 BOM", head == b"\xef\xbb\xbf",
+              "缺 BOM:Windows PowerShell 5.1 会按 ANSI 读 → 中文字符串乱码 → 脚本语法直接坏掉"
+              "(实测踩过:补 BOM 即可)")
+
     print(f"\n=== 通过 {_results['pass']} 项,注意 {_results['warn']} 项,失败 {_results['fail']} 项 ===")
     if _results["fail"]:
         print("❌ 先处理上面的 [FAIL] 再发布。")

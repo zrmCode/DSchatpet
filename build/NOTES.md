@@ -50,9 +50,18 @@ dist\DSWhalePet\DSWhalePet.exe --selftest      # 结果写进 dist\DSWhalePet\pe
 
 ## 其它已修好的打包坑
 
-1. **live2d 的 GLSL 着色器必须随包**(`v3/FrameworkShaders/*.frag|*.vert`),
+1. ⚠️ **`build.ps1` / `installer.iss` 必须存成「UTF-8 带 BOM」**。Windows PowerShell 5.1
+   对**没有 BOM** 的 `.ps1` 会按系统 ANSI(中文区是 GBK)解码:脚本里的中文字符串变成乱码,
+   轻则提示文字乱,**重则整个脚本语法报错、根本跑不起来**(实测踩过:一次编辑丢了 BOM,
+   解析器直接报 `Unexpected token '}'`)。用 PS 7(pwsh)不受影响,但别人很可能用 5.1。
+   `tools/preflight_check.py` 现在会自动检查这一点。
+2. **live2d 的 GLSL 着色器必须随包**(`v3/FrameworkShaders/*.frag|*.vert`),
    用 `collect_data_files("live2d")`;漏掉会启动即崩。
-2. `live2d.v3.params` 需要显式 hidden import。
-3. 打包后配置/日志写 **exe 所在目录**,资源读 `sys._MEIPASS`
+3. `live2d.v3.params` 需要显式 hidden import。
+4. 打包后配置/日志写 **exe 所在目录**,资源读 `sys._MEIPASS`
    (见 `pet/config.py` 的 `APP_DIR` / `BUNDLE_DIR`);开机自启命令在打包模式下直接指向 exe 自身。
-4. 窗口程序没有控制台,所以关键日志与自检结果都落盘(`pet.log` / `pet-fatal.log`)。
+5. 窗口程序没有控制台,所以关键日志与自检结果都落盘(`pet.log` / `pet-fatal.log`)。
+6. ⚠️ **缺模型时打包脚本会直接拦住**(要求 `assets\model` 里有 `*.model3.json`)。
+   仓库故意不含模型,而分享包是要发给别人的 —— 没有模型的包,别人双击根本跑不起来。
+   确实只想验证流程时,用 `$env:PET_ALLOW_NO_MODEL = '1'` 放行。
+
