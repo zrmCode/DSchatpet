@@ -1,0 +1,7 @@
+# 桌宠运行依赖(已装入项目内 .venv)
+# 注意:live2d-py 只提供 abi3 预编译 wheel,Python 需 >= 3.11;
+# 源码编译需要自行从 Live2D 官网下载 Cubism Native SDK,所以请始终用 pip 装 wheel。
+PySide6>=6.6
+live2d-py>=0.8.0
+PyOpenGL>=3.1
+numpy>=1.26
