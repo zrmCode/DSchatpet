@@ -82,6 +82,10 @@ class Bubble(QWidget):
             Qt.Tool
             | Qt.FramelessWindowHint
             | Qt.WindowDoesNotAcceptFocus
+            #: ⚠️ 还要**不接收鼠标输入**:气泡是纯装饰窗口,说话时可能正好压在桌宠身上
+            #: (桌宠靠近屏幕边缘时会摆到下方),若它会吃掉点击,用户就会觉得"点桌宠没反应"。
+            #: 实测事故就是这么来的:输入框/气泡挡住桌宠的一块区域,那块区域就点不到桌宠了。
+            | Qt.WindowTransparentForInput
         )
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
@@ -261,21 +265,31 @@ class ChatInput(QWidget):
     # ---------------------------------------------------------------- 显示
 
     def _place_below(self, anchor: QRect) -> None:
-        """放在桌宠正下方(用户要求:「固定在下方不远处」),并跟随拖动。
+        """把输入框摆到桌宠旁边:优先下方,放不下再放上方。
 
-        ⚠️ 下方空间不够时**不翻到桌宠上方**,而是贴住屏幕可用区的底边 ——
-        翻上去会让人一眼找不到输入框(实测用户当前窗口位置 y=454、任务栏占掉底部时
-        就会翻到上方,间距变成 -414 像素)。
-        允许与桌宠底部轻微重叠:模型在窗口里是居中偏上的,底部这条基本是空白。
+        ⚠️ **硬约束:绝不与桌宠矩形重叠**。输入框是会被点击、还要输入文字的窗口,
+        一旦压在桌宠身上,那块区域就从桌宠手里被抢走了 —— 点击、拖拽、右键全部落在
+        输入框上(实测事故:改成"永远放下方 + 贴屏幕底边夹取"之后,桌宠靠近屏幕底部时
+        输入框被夹到桌宠下半部分,用户表现为"点击无反应、不能拖动、打不开设置")。
+        所以顺序是:**下方 → 上方 → 实在都放不下才夹取**(允许少量重叠)。
         """
         self.adjustSize()
         geo = _screen_geometry(anchor)
         x = anchor.center().x() - self.width() // 2
-        y = anchor.bottom() + self.gap_below
         if geo is not None:
             x = max(geo.left() + 4, min(x, geo.right() - self.width() - 4))
-            y = min(y, geo.bottom() - self.height() - 4)     # 贴住底边
-            y = max(geo.top() + 4, y)
+
+        gap = self.gap_below
+        below = anchor.bottom() + gap
+        above = anchor.top() - self.height() - gap
+        if geo is None:
+            y = below
+        elif below + self.height() <= geo.bottom() + 1:
+            y = below                      # 下方放得下,且不会压住桌宠
+        elif above >= geo.top() - 1:
+            y = above                      # 改放上方,同样不重叠
+        else:
+            y = max(geo.top() + 4, geo.bottom() - self.height() - 4)   # 只能夹取
         self.move(int(x), int(y))
 
     def show_passive(self, anchor: QRect) -> None:

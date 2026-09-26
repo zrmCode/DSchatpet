@@ -155,7 +155,7 @@ def main() -> int:
             check("跟随之后仍保持同样的贴紧间距", gap == cfg.chat_input_gap, f"gap={gap}")
 
         elif n == 6:
-            print("\n[6] 桌宠贴到屏幕底部时,输入框仍在**下方**(贴底边,不翻到上方)")
+            print("\n[6] 桌宠贴到屏幕底部:输入框**不许压住桌宠**(可改放上方)")
             geo = QApplication.primaryScreen().availableGeometry()
             window.move(window.x(), geo.bottom() - window.height() - 2)
             app.processEvents()
@@ -163,13 +163,19 @@ def main() -> int:
             chat_bottom._place_below(window.frameGeometry())
             app.processEvents()
             rect = window.frameGeometry()
-            check("没有被翻到桌宠上方", chat_bottom.y() >= rect.top(),
-                  f"输入框 y={chat_bottom.y()} 桌宠 top={rect.top()}")
+            #: ⚠️ 这条断言是血换来的:以前允许"贴屏幕底边夹取",桌宠靠底时输入框就压在
+            #: 桌宠下半部分上 —— 输入框会吃点击,于是那块区域点不到桌宠
+            #: (用户表现为"点击无反应、不能拖动、打不开设置")。
+            #: 现在的规则:下方放不下就改放上方,**任何情况下都不与桌宠重叠**。
+            check("没有与桌宠矩形重叠", not chat_bottom.frameGeometry().intersects(rect),
+                  f"输入框 {chat_bottom.frameGeometry().getRect()} vs 桌宠 {rect.getRect()}")
             check("仍在屏幕可用区内(不压到任务栏)",
                   chat_bottom.y() + chat_bottom.height() <= geo.bottom(),
                   f"底边 {chat_bottom.y() + chat_bottom.height()} 屏幕底 {geo.bottom()}")
             check("水平仍然居中", abs((chat_bottom.x() + chat_bottom.width() // 2)
                                    - rect.center().x()) <= 4)
+            window.move(rect.x(), geo.top() + 80)      # 复原位置,后面几节还要用
+            app.processEvents()
 
         elif n == 7:
             print("\n[7] 鼠标远离 → 延迟隐藏")

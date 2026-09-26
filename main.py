@@ -129,6 +129,10 @@ def build_tray(app: QApplication, window: PetWindow, icon_path: Path) -> QSystem
     menu.addMenu(action_menu)
 
     menu.addSeparator()
+    #: 救援入口:透明区域穿透是"按像素判定"的,万一判定出问题,桌宠会变得**点不到**,
+    #: 这时右键菜单也点不出来 —— 托盘图标是唯一还能到达的通道,所以这里必须有一条。
+    recover = menu.addAction("修复鼠标穿透(点不到时用)", window.force_clickable)
+    recover.setToolTip("把桌宠窗口恢复成可点击;透明处穿透会在像素判定恢复正常后自动回来")
     menu.addAction("退出", app.quit)
 
     tray.setContextMenu(menu)

@@ -71,6 +71,10 @@ CLICK_SLOP = 5
 #: alpha 大于该值视为"鼠标压在模型身上"
 ALPHA_HIT_THRESHOLD = 10
 
+#: 穿透开着、光标一直在窗口内却始终判为"未命中"多久之后强制恢复可点击(秒)。
+#: 兜住"像素采样坏掉 → 窗口永久鼠标穿透 → 用户再也点不到它"这种死局。
+CLICK_THROUGH_STUCK_SECONDS = 1.5
+
 #: 鼠标离开后延迟多久隐藏聊天输入框(毫秒)—— 避免在边缘抖动时闪来闪去
 CHAT_HIDE_DELAY_MS = 500
 
@@ -189,6 +193,12 @@ class PetWindow(QOpenGLWidget):
 
         #: 应用内面板(设置窗口)打开集合:开着的时候桌宠让出置顶,见 _sync_dialog_mode
         self._open_dialogs: set[int] = set()
+        #: 点击穿透看门狗状态:光标持续在窗口内却判为未命中的起点时刻(0 = 没在计时)
+        self._stuck_since = 0.0
+        #: 像素采样是否可信;判为不可信时保持"可点击",不再自动开启穿透
+        self._click_through_suspect = False
+        #: 上一帧采到的 alpha 是否是**有效读数**(而不是"光标在窗外"或"读失败")
+        self._alpha_valid = True
 
         # 待机自主行为:A 档本地随机 / B 档让模型"想事情"
         self._idle_action_timer = QTimer(self)
@@ -283,10 +293,20 @@ class PetWindow(QOpenGLWidget):
 
         必须在 GL 上下文里做,所以放在 ``paintGL`` 末尾 —— 每帧一次 1×1 的读取,
         比整屏回读便宜得多。
+
+        ⚠️ 区分三种情况(以前只记一个 alpha,分不清"光标在窗外"和"读不到"):
+        - 光标在窗口外 → ``alpha = 0``,``_alpha_valid = True``(确实是空的)
+        - 读回来是有效数据 → 用它的 alpha
+        - **读失败/数据不完整 → 当作"命中"(255)**。宁可挡住鼠标也不能让桌宠"点不动":
+          一旦按 0 处理,窗口会被永久设成鼠标穿透,用户**再也点不到它**去恢复
+          (实测事故:用户报"点击无反应、不能拖动、打不开设置",查出来就是
+          ``WS_EX_TRANSPARENT`` 卡在开启态)。
         """
+        self._alpha_valid = False
         local = self.mapFromGlobal(QCursor.pos())
         if not self.rect().contains(local):
             self._cursor_alpha = 0
+            self._alpha_valid = True          # 明确知道:光标不在窗口里
             return
 
         dpr = self.devicePixelRatioF()
@@ -296,10 +316,18 @@ class PetWindow(QOpenGLWidget):
         y = min(fb_h - 1, max(0, int(fb_h - 1 - local.y() * dpr)))
         try:
             data = gl.glReadPixels(x, y, 1, 1, gl.GL_RGBA, gl.GL_UNSIGNED_BYTE)
-            self._cursor_alpha = int(data[3])
         except Exception:
-            # 读不到就当命中,宁可挡住也不让桌宠"点不动"
+            self._cursor_alpha = 255          # 读不到就当命中,别让桌宠点不动
+            return
+        try:
+            if data is None or len(data) < 4:
+                self._cursor_alpha = 255      # 数据不完整同样按命中处理
+                return
+            self._cursor_alpha = int(data[3])
+            self._alpha_valid = True
+        except (TypeError, ValueError):
             self._cursor_alpha = 255
+
 
     # ================================================================ 定时任务
 
@@ -309,8 +337,17 @@ class PetWindow(QOpenGLWidget):
         if self.cfg.gaze_follow:
             self._update_gaze_target()
         if self.cfg.click_through and not self._dragging:
-            over_model = self._cursor_alpha > ALPHA_HIT_THRESHOLD
-            self._set_click_through(not over_model)
+            if self._click_through_suspect:
+                #: 采样已被判为不可信(见看门狗):保持"可点击",直到重新采到确实命中
+                if self._alpha_valid and self._cursor_alpha > ALPHA_HIT_THRESHOLD:
+                    self._click_through_suspect = False
+                    from .applog import log
+
+                    log("点击穿透:像素采样恢复正常,回到常规判定")
+            else:
+                over_model = self._cursor_alpha > ALPHA_HIT_THRESHOLD
+                self._set_click_through(not over_model)
+                self._watch_click_through_stuck()
 
         # 鼠标靠近时自动出现聊天输入框
         self._update_chat_visibility(QCursor.pos())
@@ -320,6 +357,50 @@ class PetWindow(QOpenGLWidget):
         if self.cfg.idle_motion and self._idle_check >= 10:
             self._idle_check = 0
             self.pet.ensure_idle()
+
+    def _watch_click_through_stuck(self) -> None:
+        """看门狗:穿透开着、而光标**一直在窗口内**却始终判为"没命中" → 自动恢复可点击。
+
+        ⚠️ 这是为了兜住"像素采样出问题"这类故障:一旦 alpha 恒为 0,窗口会被永久设成
+        ``WS_EX_TRANSPARENT``,用户就**再也点不到它**来把设置改回来 ——
+        实测就是这样:用户报"点击无反应、不能拖动、打不开设置",一查窗口扩展样式,
+        ``WS_EX_TRANSPARENT`` 卡在开启态。
+        容忍 1.5 秒(正常在模型边缘来回移动也可能短暂命中不了),
+        超时后强制关掉穿透并记一条日志;下次判定正常就自动恢复原逻辑。
+        """
+        cursor = QCursor.pos()
+        inside = self.rect().contains(self.mapFromGlobal(cursor))
+        now = time.monotonic()
+        if not (inside and self._click_through_state):
+            self._stuck_since = 0.0
+            return
+        if self._stuck_since == 0.0:
+            self._stuck_since = now
+            return
+        if now - self._stuck_since < CLICK_THROUGH_STUCK_SECONDS:
+            return
+
+        from .applog import log
+
+        log(f"点击穿透:光标已在窗口内 {CLICK_THROUGH_STUCK_SECONDS:.1f}s 却仍判为未命中"
+            f"(alpha={self._cursor_alpha}, 有效={self._alpha_valid}),"
+            f"强制恢复可点击;像素采样修复前不再自动开启穿透")
+        self._click_through_suspect = True
+        self._set_click_through(False)
+        self._stuck_since = 0.0
+
+    def force_clickable(self) -> None:
+        """手动把窗口从"穿透卡死"里救回来(托盘菜单/诊断用)。
+
+        与看门狗同一个机制:标记采样不可信 + 立刻关掉穿透;等采样重新采到命中,
+        会自动回到常规的"透明处穿透"行为。
+        """
+        from .applog import log
+
+        log("点击穿透:手动请求恢复可点击")
+        self._click_through_suspect = True
+        self._set_click_through(False)
+        self._stuck_since = 0.0
 
     def _update_chat_visibility(self, cursor: QPoint) -> None:
         """按鼠标位置决定聊天输入框是否显示。
@@ -489,6 +570,12 @@ class PetWindow(QOpenGLWidget):
             return
         if win32.set_click_through(int(self.winId()), enabled):
             self._click_through_state = enabled
+            #: 状态变化落日志:这类问题(卡在穿透里点不到)以前完全没法从日志看出来
+            if not enabled:
+                self._stuck_since = 0.0
+            from .applog import log
+
+            log(f"点击穿透:{'开启(鼠标落到桌面)' if enabled else '关闭(可交互)'}")
 
     # --- 供托盘 / 菜单调用 ------------------------------------------------
 

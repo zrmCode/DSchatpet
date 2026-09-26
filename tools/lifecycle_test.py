@@ -195,6 +195,8 @@ def main() -> int:
 
     print("\n[2] 忙碌时回车:用户打的字不许被丢掉")
     chat_input = window.chat_input
+    chat_input.show_passive(window.frameGeometry())    # 先让它出现,再模拟打字回车
+    pump(0.3)
     chat_input.edit.setText("这句话不能被吃掉")
     window._chat_worker = None
     window.cfg.chat_enabled = False                  # 模拟"发不出去"
