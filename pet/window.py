@@ -32,7 +32,7 @@ from .chat import (
     pick_expression,
     pick_thinking_expression,
 )
-from .config import Config
+from .config import CONFIG_PATH, Config
 from .hotkey import GlobalHotkeys
 from .memory import (
     KIND_EVENT,
@@ -158,6 +158,8 @@ class PetWindow(QOpenGLWidget):
         self.chat_input = ChatInput(self)
         self.chat_input.gap_below = self.cfg.chat_input_gap
         self.chat_input.submitted.connect(self.send_message)
+        #: 回车提交走 on_submit(带返回值):没真正发出去时输入框保留用户打的字
+        self.chat_input.on_submit = self._submit_from_input
         self._chat_worker: _ChatWorker | None = None
         self._thought_worker: _ChatWorker | None = None
         self._memory_worker: _ChatWorker | None = None
@@ -185,6 +187,9 @@ class PetWindow(QOpenGLWidget):
         self._pending_poke_y = 0.5
         self._ignore_next_release = False
 
+        #: 应用内面板(设置窗口)打开集合:开着的时候桌宠让出置顶,见 _sync_dialog_mode
+        self._open_dialogs: set[int] = set()
+
         # 待机自主行为:A 档本地随机 / B 档让模型"想事情"
         self._idle_action_timer = QTimer(self)
         self._idle_action_timer.setSingleShot(True)
@@ -196,6 +201,9 @@ class PetWindow(QOpenGLWidget):
         self.setWindowTitle("DS鲸鱼娘 桌宠")
         #: 测试工具会把它设为 False,避免把测试用的配置写回用户的 config.json
         self.persist_config = True
+        #: 配置写入路径。生产环境是项目目录下的 config.json;
+        #: ``enable_test_mode()`` 会把它重定向到 .tmp 沙盒,这样"保存"逻辑在测试里照样被测到
+        self.config_path = CONFIG_PATH
         self.setWindowFlags(
             Qt.FramelessWindowHint      # 无边框
             | Qt.WindowStaysOnTopHint   # 置顶
@@ -332,6 +340,11 @@ class PetWindow(QOpenGLWidget):
             return
         if self._dragging:
             return
+        if self.dialogs_open():
+            #: 设置面板开着时不弹输入框:它会盖在面板上,或抢面板的焦点
+            if self.chat_input.isVisible() and not self.chat_input.is_engaged():
+                self.chat_input.hide()
+            return
 
         pet_rect = self.frameGeometry()
         near = _distance_to_rect(cursor, pet_rect) <= self.cfg.chat_hover_distance
@@ -409,10 +422,23 @@ class PetWindow(QOpenGLWidget):
     # --- 全局快捷键 ------------------------------------------------------
 
     def _setup_hotkeys(self) -> None:
+        """注册全局快捷键。
+
+        ⚠️ **复用已有实例**而不是每次新建:``apply_config()``(每次在设置面板点保存)都会走到
+        这里,以前每次都 ``GlobalHotkeys(...)`` 新建一个 —— 旧对象只是被覆盖,
+        它的原生事件过滤器与 ``QObject`` 父子关系还挂着,等于**每保存一次设置泄漏一个**,
+        长时间使用后残留的过滤器会重复分发同一条热键。
+        """
         bindings = {
             "toggle_visible": self.cfg.hotkey_toggle_visible,
             "open_chat": self.cfg.hotkey_open_chat,
         }
+        existing = getattr(self, "hotkeys", None)
+        if existing is not None:
+            existing.unregister_all()
+            existing.rebind(bindings)
+            existing.register_all()
+            return
         self.hotkeys = GlobalHotkeys(int(self.winId()), bindings, self)
         self.hotkeys.triggered.connect(self._on_hotkey)
         self.hotkeys.register_all()
@@ -498,7 +524,72 @@ class PetWindow(QOpenGLWidget):
 
         dialog = SettingsDialog(self.cfg, self, owner=self)
         dialog.applied.connect(self.apply_config)
+        #: 面板开着的时候桌宠要让位(见 _sync_dialog_mode)。
+        #: 用 id 记集合 + 两个信号都做幂等移除:``finished`` 与 ``destroyed`` 都可能触发,
+        #: 用计数器会重复减,导致"还有面板开着却提前恢复置顶"。
+        key = id(dialog)
+        self._open_dialogs.add(key)
+        dialog.finished.connect(lambda _result, k=key: self._close_dialog(k))
+        dialog.destroyed.connect(lambda *_args, k=key: self._close_dialog(k))
+        self._sync_dialog_mode()
         return dialog
+
+    # --- 面板打开时让位:否则聊天窗口会盖住设置面板 ------------------------
+
+    def _close_dialog(self, key: int) -> None:
+        if key not in self._open_dialogs:
+            return                      # 幂等:finished 与 destroyed 会各来一次
+        self._open_dialogs.discard(key)
+        self._sync_dialog_mode()
+
+    def _sync_dialog_mode(self) -> None:
+        """按"当前是否有面板开着"调整桌宠置顶与输入框。
+
+        ⚠️ 修的是用户反馈的「聊天框会在本应用设置窗口上遮挡」。
+        实测(枚举 Win32 z 序号):桌宠、气泡、输入框、设置面板**同处置顶带**,
+        带内谁最后被抬起谁在上面 —— 面板只在被点击激活时才回到最上,而
+        ``bubble.show_text()`` / ``chat_input.show_passive()`` 里的 ``raise_()``
+        会把气泡/输入框抬到面板上面(实测气泡序号 7 vs 面板 10)。
+        把桌宠的 ``WS_EX_TOPMOST`` 摘掉后,它的附属窗口一起退出置顶带,
+        于是无论怎么 ``raise_()`` 都盖不住置顶的面板;面板关掉再恢复。
+        """
+        if self.dialogs_open():
+            if self.chat_input.isVisible():
+                self.chat_input.hide()      # 让位期间不弹输入框
+            win32.set_topmost(int(self.winId()), False)
+        else:
+            win32.set_topmost(int(self.winId()), self.cfg.always_on_top)
+
+    def dialogs_open(self) -> bool:
+        """当前是否有应用内面板开着(输入框与悬停逻辑据此让位)。"""
+        return bool(self._open_dialogs)
+
+    # --- 测试/工具模式 ----------------------------------------------------
+
+    def enable_test_mode(self, name: str = "test") -> None:
+        """测试与诊断工具的**统一入口**:不写回用户配置,养成数据改指沙盒。
+
+        ⚠️ 为什么必须有个统一入口:以前每个工具各自写 ``persist_config = False``,
+        但那只管住了 ``config.json`` —— ``profile`` / ``memories`` / ``history``
+        仍然指向用户的真实文件,于是**跑一次测试就把假对话写进了用户的养成档案**
+        (实测踩过:真实 history.jsonl 从 10 条涨到 42 条、亲密度凭空 +9,
+        测试假服务器的罐头回复「你困了吗 / 我有点困了…」混进了真实记录)。
+        另外设置面板的「保存」曾经绕过 ``persist_config`` 直接写 config.json,
+        把用户的 chat_enabled 等字段覆盖成测试值(那处也已修)。
+        """
+        from .config import APP_DIR
+        from .memory import HistoryStore, MemoryStore, Profile
+
+        sandbox = APP_DIR / ".tmp" / "testmode" / name
+        sandbox.mkdir(parents=True, exist_ok=True)
+        self.persist_config = False
+        #: 配置写入路径也重定向:让"保存"这条路径在测试里**照常走通**,
+        #: 只是落在沙盒文件上 —— 比"测试模式干脆不写盘"覆盖更完整
+        self.config_path = sandbox / "config.json"
+        self.profile_path = sandbox / "profile.json"
+        self.profile = Profile()
+        self.memories = MemoryStore(sandbox / "memories.jsonl", cap=self.cfg.memory_max_items)
+        self.history = HistoryStore(sandbox / "history.jsonl")
 
     def open_settings(self) -> None:
         """打开设置面板;保存后即时生效,不需要重启。"""
@@ -507,6 +598,11 @@ class PetWindow(QOpenGLWidget):
     def apply_config(self) -> None:
         """把 ``self.cfg`` 的变化即时应用(设置面板保存后调用)。"""
         cfg = self.cfg
+        #: ⚠️ 先把当前位置写回配置,再应用几何。否则 ``_apply_geometry()`` 会拿**旧的**
+        #: ``cfg.window_x/y``(它们只在退出时才同步)去摆窗口 —— 用户拖过桌宠之后
+        #: 一打开设置点保存,桌宠就被瞬移回旧坐标/右下角(实测必现)。
+        cfg.window_x = self.x()
+        cfg.window_y = self.y()
         self.setWindowOpacity(cfg.opacity)
         self.chat_input.gap_below = cfg.chat_input_gap
         render_timer = getattr(self, "render_timer", None)
@@ -596,7 +692,9 @@ class PetWindow(QOpenGLWidget):
         thinking = pick_thinking_expression(self.pet.expressions)
         if thinking:
             self.pet.set_expression(thinking)
-        self.bubble.show_text("…", self.frameGeometry(), 0)
+        #: ⚠️ 思考气泡**必须有上限**:以前用 ``seconds=0``(永不消失),而失败回调是空的,
+        #: 于是断网/5xx/超时时「…」就永久挂在桌宠头顶(实测 42 秒后仍在,配置里是 12 秒)。
+        self.bubble.show_text("…", self.frameGeometry(), self.cfg.chat_bubble_seconds or 12)
 
         event = f"(用户戳了戳你的{region})"
         messages = self._chat_client.build_messages(
@@ -607,11 +705,19 @@ class PetWindow(QOpenGLWidget):
         worker = _ChatWorker(lambda: self._chat_client.complete(messages), self)
         #: 戳一下也算一次互动(亲密度会涨),但不算"对话轮数" —— 记忆抽取不被它催
         worker.replied.connect(lambda reply: self._on_reply(event, reply, count_turn=False))
-        worker.failed.connect(lambda _msg: None)   # 被戳失败静默处理,不弹错误
+        worker.failed.connect(lambda msg, region=region: self._on_poke_error(str(msg), region))
         worker.finished.connect(self._on_chat_worker_finished)
         self._chat_worker = worker
         worker.start()
         log(f"点击:被戳了(的{region}),已让模型回应")
+
+    def _on_poke_error(self, message: str, region: str) -> None:
+        """被戳的请求失败:静默收掉思考气泡(不打扰用户),但要在日志里留痕。"""
+        from .applog import log
+
+        log(f"点击失败:被戳了(的{region}),模型没回应:{message}")
+        if self.bubble.label.text() == "…":
+            self.bubble.hide()
 
     # ================================================================ 鼠标交互
 
@@ -722,21 +828,30 @@ class PetWindow(QOpenGLWidget):
             # 没有可用的对话后端:给友好提示,而不是弹出一个发不出消息的框
             self.bubble.show_text(self._chat_setup_hint(), self.frameGeometry(), 15)
             return
+        if self.dialogs_open():
+            #: 面板开着时不弹输入框:``open_at`` 会 activateWindow 抢走面板焦点
+            from .applog import log
+
+            log("对话:设置面板开着,先不弹输入框")
+            return
         self.chat_input.open_at(self.frameGeometry())
 
-    def send_message(self, text: str) -> None:
-        """把用户的话发出去。同步返回,结果通过信号回到 UI 线程。"""
+    def send_message(self, text: str) -> bool:
+        """把用户的话发出去。返回**是否真的发出**(没发出时调用方要保留用户输入)。
+
+        同步返回,结果通过信号回到 UI 线程。
+        """
         text = (text or "").strip()
         if not text:
-            return
+            return False
 
         if not self.chat_available():
             self.bubble.show_text(self._chat_setup_hint(), self.frameGeometry(), 12)
-            return
+            return False
 
         if self._chat_worker is not None and self._chat_worker.isRunning():
             self.bubble.show_text("我还在想上一句呢…", self.frameGeometry(), 4)
-            return
+            return False
 
         self._last_user_action = time.monotonic()
         self._chat_busy = True
@@ -749,7 +864,9 @@ class PetWindow(QOpenGLWidget):
         if thinking:
             self.pet.set_expression(thinking)
 
-        self.bubble.show_text("…", self.frameGeometry(), 0)   # 0 = 不自动消失
+        #: 思考气泡给一个上限:万一请求挂了(断网/5xx/超时)又没人来替换它,
+        #: 不会永远挂在桌宠头上
+        self.bubble.show_text("…", self.frameGeometry(), self.cfg.chat_bubble_seconds or 12)
 
         messages = self._chat_client.build_messages(
             text, self.history.recent(self.cfg.chat_history), extra_system=self._memory_block(text),
@@ -760,6 +877,11 @@ class PetWindow(QOpenGLWidget):
         worker.finished.connect(self._on_chat_worker_finished)
         self._chat_worker = worker
         worker.start()
+        return True
+
+    def _submit_from_input(self, text: str) -> bool:
+        """输入框回车的接入口:只有真的发出去才让输入框清空收起。"""
+        return self.send_message(text)
 
     # ================================================================ 养成档案
 
@@ -859,6 +981,18 @@ class PetWindow(QOpenGLWidget):
             self._action_hold_until = time.monotonic() + ACTION_HOLD_SECONDS
         return guessed
 
+    def _say(self, text: str, seconds: int | None = None) -> None:
+        """显示一句话的气泡,但**桌宠被隐藏时不显示**。
+
+        ⚠️ ``toggle_visible()`` 的约定是"隐藏桌宠时气泡一起隐藏"(气泡是它的附属窗口)。
+        可是在飞的回答(或待机独白)回来时会直接 ``bubble.show_text()`` ——
+        于是桌宠已经隐藏了、气泡却单独蹦到屏幕中央,既与设计冲突,也让人以为是故障。
+        """
+        if not text or not self.isVisible():
+            return
+        self.bubble.show_text(text, self.frameGeometry(),
+                              self.cfg.chat_bubble_seconds if seconds is None else seconds)
+
     def _on_reply(self, user_text: str, reply, count_turn: bool = True) -> None:
         """一次回应的落地处理:写历史、涨亲密度、应用表情动作、显示气泡。
 
@@ -895,7 +1029,7 @@ class PetWindow(QOpenGLWidget):
             from .applog import log
 
             log(f"对话:忽略了模型给的无效指令 {list(reply.dropped)}")
-        self.bubble.show_text(reply.text, self.frameGeometry(), self.cfg.chat_bubble_seconds)
+        self._say(reply.text)
 
         # 攒够轮数就让模型抽一次长期记忆(后台,失败静默)
         every = self.cfg.memory_extract_every
@@ -909,7 +1043,7 @@ class PetWindow(QOpenGLWidget):
         from .applog import log
 
         log(f"对话失败:{message}")
-        self.bubble.show_text(f"(对话失败){message}", self.frameGeometry(), 10)
+        self._say(f"(对话失败){message}", 10)
 
     # ================================================================ 待机自主行为
 
@@ -968,7 +1102,7 @@ class PetWindow(QOpenGLWidget):
             reply = ChatReply(text=reply)
         self._apply_reply_actions(reply)
         if reply.text and self.cfg.idle_thought_bubble:
-            self.bubble.show_text(reply.text, self.frameGeometry(), self.cfg.chat_bubble_seconds)
+            self._say(reply.text)
 
     def chat_ready(self) -> tuple[bool, str]:
         """给设置/诊断用:对话是否可用、后端来源。"""
@@ -1045,19 +1179,41 @@ class PetWindow(QOpenGLWidget):
         self._idle_thought_timer.stop()
         if getattr(self, "hotkeys", None) is not None:
             self.hotkeys.unregister_all()
-        worker = self._chat_worker
-        if worker is not None:
-            try:
-                if worker.isRunning():
-                    worker.wait(2000)   # 别让后台请求拖着进程不退出
-            except RuntimeError:
-                pass                    # 对象可能已被 Qt 回收
+        self._stop_workers()
         for timer in (getattr(self, "render_timer", None),
                       getattr(self, "input_timer", None),
                       getattr(self, "fps_timer", None)):
             if timer is not None:
                 timer.stop()
         super().closeEvent(event)
+
+    def _stop_workers(self) -> None:
+        """退出前把**所有**后台 worker 收干净。
+
+        ⚠️ 这里以前只等了 ``_chat_worker``,而且只等 2 秒:
+        ``_thought_worker``(待机独白)与 ``_memory_worker``(后台记忆抽取)完全没等,
+        而一次 LLM 请求要 3~30 秒 —— 运行中的 ``QThread`` 在解释器退出时被析构会触发
+        Qt 的 ``qFatal("QThread: Destroyed while thread is still running")``,
+        实测退出码 ``0xC0000409``(聊天中退出、第 5 轮记忆抽取中退出都能复现)。
+        现在:先请求中断并给一小段时间优雅收尾,仍不退出就强制终止(进程马上要退,
+        这里不再追求"体面",只求不崩)。
+        """
+        for attr in ("_chat_worker", "_thought_worker", "_memory_worker"):
+            worker = getattr(self, attr, None)
+            if worker is None:
+                continue
+            try:
+                if worker.isRunning():
+                    worker.requestInterruption()
+                    if not worker.wait(400):
+                        from .applog import log
+
+                        log(f"退出:{attr} 仍在运行,强制终止")
+                        worker.terminate()
+                        worker.wait(1500)
+            except RuntimeError:
+                pass                     # 对象可能已被 Qt 回收
+            setattr(self, attr, None)
 
     def diagnostics(self) -> dict:
         info = self.pet.stats()

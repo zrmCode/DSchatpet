@@ -78,6 +78,52 @@ def find_model_json(model_dir: Path) -> Path:
     return matches[0]
 
 
+def _as_float(value, default: float, lo: float, hi: float) -> float:
+    """容错取浮点:非数字(``None`` / ``"abc"`` / ``NaN``)一律退回默认值。"""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = float(default)
+    if number != number:          # NaN
+        number = float(default)
+    return max(lo, min(hi, number))
+
+
+def _as_int(value, default: int, lo: int, hi: int) -> int:
+    """容错取整数:先按浮点容错(兼容 ``"420"`` 这种手写成字符串的值),再夹取范围。"""
+    return int(_as_float(value, float(default), float(lo), float(hi)))
+
+
+def _as_bool(value, default: bool) -> bool:
+    """容错取布尔:接受 ``true/false``、``1/0``、``"true"/"yes"/"on"`` 等写法。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in ("1", "true", "yes", "on"):
+            return True
+        if text in ("0", "false", "no", "off", ""):
+            return False
+    return bool(default)
+
+
+def _as_str(value, default: str) -> str:
+    """容错取字符串:非字符串退回默认值(避免后面 ``.strip()`` / ``.startswith`` 炸)。"""
+    return value if isinstance(value, str) else str(default)
+
+
+def _as_optional_int(value) -> int | None:
+    """``window_x`` / ``window_y``:可以是 ``None``(表示"首次启动自动摆"),也可以是整数。"""
+    if value is None:
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass
 class Config:
     """可调参数。字段都有默认值,旧配置缺少新字段时自动补默认值。"""
@@ -171,21 +217,52 @@ class Config:
         )
 
     def clamp(self) -> None:
-        """把数值收进合理区间,避免手改配置把界面搞坏。"""
-        self.window_height = int(max(200, min(1600, self.window_height)))
-        self.scale = float(max(0.2, min(3.0, self.scale)))
-        self.opacity = float(max(0.2, min(1.0, self.opacity)))
-        self.gaze_strength = float(max(0.0, min(1.5, self.gaze_strength)))
-        self.gaze_smoothing = float(max(0.02, min(1.0, self.gaze_smoothing)))
-        self.fps = int(max(10, min(144, self.fps)))
-        self.chat_history = int(max(0, min(50, self.chat_history)))
-        self.chat_timeout = float(max(5.0, min(120.0, self.chat_timeout)))
-        self.chat_bubble_seconds = int(max(0, min(120, self.chat_bubble_seconds)))
-        self.chat_hover_distance = int(max(0, min(400, self.chat_hover_distance)))
-        self.chat_input_gap = int(max(0, min(80, self.chat_input_gap)))
-        self.idle_action_interval = int(max(5, min(1800, self.idle_action_interval)))
-        self.idle_thought_interval = int(max(60, min(7200, self.idle_thought_interval)))
-        self.memory_extract_every = int(max(0, min(100, self.memory_extract_every)))
-        self.memory_max_items = int(max(10, min(5000, self.memory_max_items)))
-        self.memory_inject_items = int(max(0, min(30, self.memory_inject_items)))
-        self.memory_inject_chars = int(max(200, min(4000, self.memory_inject_chars)))
+        """把字段收进合理区间,并把**类型也纠回来**。
+
+        ⚠️ 以前这里直接 ``max(200, min(1600, self.window_height))``:只要用户手改
+        ``config.json`` 时写了个 ``null`` 或带引号的字符串(``"373"``),
+        比较就会抛 ``TypeError`` —— ``Config.load()`` 挂掉,而它发生在启动早期,
+        表现是**桌宠静止、无热键、也没有任何日志**(实测极难排查)。
+        现在非法值一律退回该字段的默认值,而不是让程序半死不活。
+        """
+        for name, lo, hi in (
+            ("window_height", 200, 1600),
+            ("fps", 10, 144),
+            ("chat_history", 0, 50),
+            ("chat_bubble_seconds", 0, 120),
+            ("chat_hover_distance", 0, 400),
+            ("chat_input_gap", 0, 80),
+            ("idle_action_interval", 5, 1800),
+            ("idle_thought_interval", 60, 7200),
+            ("memory_extract_every", 0, 100),
+            ("memory_max_items", 10, 5000),
+            ("memory_inject_items", 0, 30),
+            ("memory_inject_chars", 200, 4000),
+        ):
+            setattr(self, name, _as_int(getattr(self, name), getattr(Config, name), lo, hi))
+
+        for name, lo, hi in (
+            ("scale", 0.2, 3.0),
+            ("opacity", 0.2, 1.0),
+            ("gaze_strength", 0.0, 1.5),
+            ("gaze_smoothing", 0.02, 1.0),
+            ("chat_timeout", 5.0, 120.0),
+        ):
+            setattr(self, name, _as_float(getattr(self, name), getattr(Config, name), lo, hi))
+
+        for name in (
+            "always_on_top", "click_through", "gaze_follow", "idle_motion", "poke_reaction",
+            "chat_enabled", "chat_use_dsh_credentials", "chat_model_actions", "chat_use_tools",
+            "chat_hover", "chat_setup_hint_shown", "idle_autonomy", "idle_llm_thoughts",
+            "idle_thought_bubble", "memory_enabled", "mute", "autostart",
+        ):
+            setattr(self, name, _as_bool(getattr(self, name), getattr(Config, name)))
+
+        for name in (
+            "model_dir", "hotkey_toggle_visible", "hotkey_open_chat", "chat_base_url",
+            "chat_model", "chat_api_key", "chat_api_key_env", "chat_persona",
+        ):
+            setattr(self, name, _as_str(getattr(self, name), getattr(Config, name)))
+
+        self.window_x = _as_optional_int(self.window_x)
+        self.window_y = _as_optional_int(self.window_y)

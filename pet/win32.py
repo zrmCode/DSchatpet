@@ -9,8 +9,9 @@ Qt 自带 ``Qt.WindowTransparentForInput``,但它会同时吃掉窗口的全部�
 
 from __future__ import annotations
 
+import ctypes
 import sys
-from ctypes import windll
+from ctypes import windll, wintypes
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -32,6 +33,30 @@ SWP_FRAMECHANGED = 0x0020
 HWND_TOPMOST = -1
 HWND_NOTOPMOST = -2
 
+_argtypes_ready = False
+
+
+def _user32():
+    """取 user32,并且**先声明参数类型**。
+
+    ⚠️ 这一条是硬要求,不是可选的洁癖:``HWND_TOPMOST(-1)`` / ``HWND_NOTOPMOST(-2)``
+    是**负值伪句柄**。不声明 argtypes 时 ctypes 把 Python int 按 32 位 int 传,
+    64 位下不做符号扩展 → 被调方收到 ``0x00000000FFFFFFFE`` 而不是 ``-2``,
+    ``SetWindowPos`` 直接失败返回 0 —— 而返回值没人检查,于是**静默什么都不做**。
+    实测后果:``set_topmost()`` 从来没生效过(右键菜单「置顶」是摆设),
+    依赖它的"设置面板打开时让出置顶"也一并失效。
+    """
+    global _argtypes_ready
+    user32 = windll.user32
+    if not _argtypes_ready and IS_WINDOWS:
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND, wintypes.HWND,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint,
+        ]
+        user32.SetWindowPos.restype = wintypes.BOOL
+        _argtypes_ready = True
+    return user32
+
 
 def _ex_style(hwnd: int) -> int:
     return windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
@@ -39,8 +64,8 @@ def _ex_style(hwnd: int) -> int:
 
 def _set_ex_style(hwnd: int, style: int) -> None:
     windll.user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
-    windll.user32.SetWindowPos(
-        hwnd, 0, 0, 0, 0, 0,
+    _user32().SetWindowPos(
+        wintypes.HWND(int(hwnd)), wintypes.HWND(0), 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
     )
 
@@ -65,12 +90,21 @@ def hide_from_alt_tab(hwnd: int) -> None:
 
 
 def set_topmost(hwnd: int, enabled: bool) -> None:
-    """强制置顶 / 取消置顶。"""
+    """强制置顶 / 取消置顶。
+
+    ⚠️ **必须显式声明 argtypes 并把伪句柄包成 HWND**。``HWND_TOPMOST(-1)`` /
+    ``HWND_NOTOPMOST(-2)`` 是**负值伪句柄**:不声明 argtypes 时 ctypes 按 32 位 int 传参,
+    64 位下不做符号扩展 → 实际收到 ``0x00000000FFFFFFFE`` 这种无效值,
+    ``SetWindowPos`` 直接失败并返回 0(而返回值没检查,所以**静默失效**)。
+    实测踩过:这个函数以前一直没生效,右键菜单里的「置顶」开关是个摆设
+    (窗口的置顶只来自 Qt 的 ``WindowStaysOnTopHint``);
+    而"设置面板打开时让出置顶"也依赖它,于是聊天窗口照样盖住面板。
+    """
     if not IS_WINDOWS or not hwnd:
         return
-    windll.user32.SetWindowPos(
-        hwnd,
-        HWND_TOPMOST if enabled else HWND_NOTOPMOST,
+    _user32().SetWindowPos(
+        wintypes.HWND(int(hwnd)),
+        wintypes.HWND(HWND_TOPMOST if enabled else HWND_NOTOPMOST),
         0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
     )

@@ -53,7 +53,7 @@ def main() -> int:
     app.setQuitOnLastWindowClosed(True)
 
     window = PetWindow(cfg, model_dir, model_json, actions)
-    window.persist_config = False   # 诊断工具不该改用户的 config.json
+    window.enable_test_mode("probe")
     window.show()
 
     state = {"tick": 0}

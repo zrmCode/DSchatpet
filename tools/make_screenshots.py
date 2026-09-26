@@ -98,7 +98,7 @@ def main() -> int:
 
     window = PetWindow(cfg, model_dir, config_mod.find_model_json(model_dir),
                        load_actions(model_dir))
-    window.persist_config = False
+    window.enable_test_mode("make_screenshots")
     window.show()
     window.input_timer.stop()
     window._idle_action_timer.stop()

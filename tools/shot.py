@@ -70,7 +70,7 @@ def main() -> int:
     app.setQuitOnLastWindowClosed(True)
 
     window = PetWindow(cfg, model_dir, config_mod.find_model_json(model_dir), actions)
-    window.persist_config = False   # 别把测试参数写回用户的 config.json
+    window.enable_test_mode("shot")
     window.show()
 
     def shoot() -> None:

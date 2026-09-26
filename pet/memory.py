@@ -225,6 +225,11 @@ class MemoryStore:
         self.path = path
         self.cap = cap
         self._items: list[Memory] = []
+        #: id → 单调递增的插入序号。用作淘汰排序的**次级键**(见 ``add``)。
+        #: ⚠️ 不能拿列表下标当插入序号:淘汰会重排列表,下标就不再等于插入顺序,
+        #: 于是"同重要度同时间"时会丢掉刚写入的那条(实测踩过)。
+        self._order: dict[str, int] = {}
+        self._seq = 0
         self.load()
 
     # ---------------------------------------------------------------- 读写
@@ -239,11 +244,22 @@ class MemoryStore:
                 if not line:
                     continue
                 try:
-                    memory = Memory.from_dict(json.loads(line))
+                    raw = json.loads(line)
                 except json.JSONDecodeError:
+                    continue                       # 半行/坏行:跳过这一条,别让整个库加载失败
+                #: ⚠️ 合法 JSON 但**不是对象**(``5`` / ``null`` / ``[1,2]``)也要挡住:
+                #: 以前只 catch JSONDecodeError,``Memory.from_dict`` 会在这些行上抛
+                #: ``AttributeError``,整个记忆库直接加载失败(一条坏行毁掉全部记忆)。
+                if not isinstance(raw, dict):
+                    continue
+                try:
+                    memory = Memory.from_dict(raw)
+                except (AttributeError, TypeError, ValueError):
                     continue
                 if memory:
                     self._items.append(memory)
+                    self._seq += 1
+                    self._order[memory.id] = self._seq      # 文件顺序即插入顺序
         except OSError:
             pass
 
@@ -272,9 +288,22 @@ class MemoryStore:
         if self.is_duplicate(memory.text):
             return False
         self._items.append(memory)
+        self._seq += 1
+        self._order[memory.id] = self._seq
         if len(self._items) > self.cap:
-            self._items.sort(key=lambda m: (m.importance, m.timestamp), reverse=True)
-            del self._items[self.cap:]
+            #: 淘汰排序:重要度 → 写入时间 → **插入序号**(都是降序,新写入的胜出)。
+            #: ⚠️ 以前是"稳定排序 + 截尾":同重要度且同一秒写入时(测试与连续记忆抽取
+            #: 都会出现),稳定排序保持插入顺序,截掉的恰好是**最新**那条 —— 与
+            #: "记住最近发生的事"完全相反。
+            ranked = sorted(
+                self._items,
+                key=lambda item: (item.importance, item.timestamp,
+                                  self._order.get(item.id, 0)),
+                reverse=True,
+            )
+            self._items = ranked[: self.cap]
+            alive = {item.id for item in self._items}
+            self._order = {key: value for key, value in self._order.items() if key in alive}
         return True
 
     def remove(self, memory_id: str) -> bool:
@@ -294,20 +323,28 @@ class MemoryStore:
         return list(self._items)
 
     def search(self, query: str, limit: int = 6) -> list[Memory]:
-        """轻量相关性检索:字符重合度 + 重要度 + 新鲜度(零依赖、够用)。"""
+        """轻量相关性检索:**先按"有没有命中话题"分层**,层内再比加权分。
+
+        ⚠️ 以前的公式 ``overlap*2 + importance*0.6 + recency*0.5`` 有个结构性毛病:
+        重要度(最高 5 → 3.0 分)与新鲜度(最高 0.5 分)是**恒定加成**,
+        而相关性被"命中词数 ÷ 查询词数"一除,长查询里命中两三个词也只有 0.2~0.4 ——
+        于是"完全无关但重要又新"的记忆会压过"确实命中话题的老记忆",
+        注入人设的记忆跟当前话题毫不相干。现在用分层键:
+        有命中的(第 1 层)永远排在没命中的(第 0 层)前面,层内才比权重。
+        """
         if not self._items:
             return []
         now = time.time()
         grams = _ngrams(query)
-        scored: list[tuple[float, Memory]] = []
+        scored: list[tuple[tuple[int, float], Memory]] = []
         for memory in self._items:
             other = _ngrams(memory.text)
             overlap = (len(grams & other) / max(1, len(grams))) if grams else 0.0
             recency = 1.0 / (1.0 + (now - memory.timestamp) / (30 * 86400))
-            score = overlap * 2.0 + memory.importance * 0.6 + recency * 0.5
+            weight = overlap * 4.0 + min(max(memory.importance, 0), 5) * 0.3 + recency * 0.5
             if memory.source == "manual":
-                score += 0.3        # 用户亲口教的,优先级稍高
-            scored.append((score, memory))
+                weight += 0.3       # 用户亲口教的,优先级稍高
+            scored.append(((1 if overlap > 0 else 0, weight), memory))
         scored.sort(key=lambda item: item[0], reverse=True)
         return [memory for _, memory in scored[:limit]]
 

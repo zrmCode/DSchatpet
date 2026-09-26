@@ -84,7 +84,7 @@ def main() -> int:
     cfg.window_x = screen.left() + 120
     cfg.window_y = screen.top() + 80
     window = PetWindow(cfg, model_dir, config_mod.find_model_json(model_dir), load_actions(model_dir))
-    window.persist_config = False        # 绝不写回用户的 config.json
+    window.enable_test_mode("chat_hover_test")
     window.show()
     # show() 会触发 initializeGL 创建输入轮询定时器;在事件循环开始前停掉它,
     # 否则真实鼠标位置可能先把输入框弹出来,污染"初始不可见"等断言

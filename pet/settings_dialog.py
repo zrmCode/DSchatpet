@@ -473,7 +473,10 @@ class SettingsDialog(QDialog):
         self.chat_api_key.setText(cfg.chat_api_key)
         self.chat_api_key_env.setText(cfg.chat_api_key_env)
         self.chat_use_dsh_credentials.setChecked(cfg.chat_use_dsh_credentials)
-        self.chat_hover = QCheckBox("鼠标靠近时自动弹出输入框")
+        #: ⚠️ 这里**只能回填已存在的那个复选框**。以前这一行是
+        #: ``self.chat_hover = QCheckBox(...)`` —— 又新建了一个**没进任何布局**的控件,
+        #: 于是用户在「对话」页看到的那个(建在 ``_build_ui`` 里、已 addRow 的)
+        #: 状态永远不更新,而保存时读的是这个影子控件:勾了没用、显示也不对。
         self.chat_hover.setChecked(cfg.chat_hover)
         self.chat_history.setValue(cfg.chat_history)
         self.chat_timeout.setValue(cfg.chat_timeout)
@@ -559,8 +562,17 @@ class SettingsDialog(QDialog):
 
     def _on_save(self) -> None:
         self._collect()
+        #: ⚠️ 写入路径由桌宠窗口提供(``window.config_path``):
+        #: 生产环境是项目目录的 config.json,测试/工具里被重定向到 .tmp 沙盒。
+        #: 以前这里无条件 ``self.cfg.save()`` 写死真实文件 —— 一个临时脚本调了本方法
+        #: 就把测试配置(chat_enabled=false 等)覆盖进用户的 config.json,
+        #: 之后所有依赖对话的功能都"莫名不可用"(实测踩过)。
+        path = getattr(self.owner, "config_path", None)
         try:
-            self.cfg.save()
+            if path is not None:
+                self.cfg.save(path)
+            else:
+                self.cfg.save()
         except OSError as exc:
             self.test_result.setText(f"写入配置失败:{exc}")
             return

@@ -104,7 +104,7 @@ class _HotkeyFilter(QAbstractNativeEventFilter):
             msg = ctypes.cast(int(message), ctypes.POINTER(_MSG)).contents
             if msg.message == WM_HOTKEY:
                 self._owner._seen.append(f"{raw}|hwnd={int(msg.hWnd or 0)}|id={int(msg.wParam)}")
-                self._owner._dispatch(int(msg.wParam))
+                self._owner._dispatch(int(msg.wParam), int(msg.time))
         except Exception:
             pass
         return False, 0
@@ -115,14 +115,20 @@ class GlobalHotkeys(QObject):
 
     ⚠️ 实测:同一条 ``WM_HOTKEY`` 会被 Qt 通过原生事件过滤器**投递两次**
        (窗口句柄与热键 id 完全相同)。若不去重,"显示/隐藏"会被连续触发两次而互相抵消,
-       表现为"按了快捷键没反应"。这里按热键 id 做时间窗去重;由于注册时带了
-       ``MOD_NOREPEAT``(长按不会重复),250ms 内不可能存在真实的第二次按键。
+       表现为"按了快捷键没反应"。
+
+    ⚠️ 判重必须用**消息时间戳**(``MSG.time``),不能只用"距上次多少毫秒":
+    重复投递的两条消息时间戳**完全相同**,而人手真实连按两下间隔约 120ms ——
+    用时间窗去重会把真实连按一起吃掉(实测:250ms 窗口下快速按两下只生效一次,
+    用户表现就是"按了没反应")。只有在拿不到时间戳(``time == 0``)时才退回
+    一个很短的时间窗兜底。
     """
 
     triggered = Signal(str)
 
     _BASE_ID = 0xA520
-    _DEDUPE_SECONDS = 0.25
+    #: 兜底时间窗:仅在消息时间戳不可用时使用,取得足够小以免吃掉真实连按
+    _FALLBACK_DEDUPE_SECONDS = 0.05
 
     def __init__(self, hwnd: int, bindings: dict[str, str], parent=None) -> None:
         super().__init__(parent)
@@ -131,6 +137,8 @@ class GlobalHotkeys(QObject):
         self._ids: dict[int, str] = {}
         self._filter: _HotkeyFilter | None = None
         self._failed: list[str] = []
+        #: 上一次分发的 (热键 id, 消息时间戳);时间戳相同 = 同一次按键的重复投递
+        self._last_message: tuple[int, int] | None = None
         self._last_dispatch: dict[int, float] = {}
         #: 诊断用:被去重掉的重复投递次数 / 过滤器看到的原始消息(截断保留)
         self.duplicates_ignored = 0
@@ -181,6 +189,16 @@ class GlobalHotkeys(QObject):
                 return hotkey_id
         return None
 
+    def rebind(self, bindings: dict[str, str]) -> None:
+        """换一组绑定(复用同一个实例,避免泄漏原生事件过滤器)。
+
+        调用顺序应为 ``unregister_all()`` → ``rebind()`` → ``register_all()``。
+        """
+        self._bindings = {k: v for k, v in bindings.items() if v}
+        self._ids.clear()
+        self._last_message = None
+        self._last_dispatch.clear()
+
     def unregister_all(self) -> None:
         if IS_WINDOWS and self._hwnd:
             user32 = ctypes.windll.user32
@@ -198,14 +216,24 @@ class GlobalHotkeys(QObject):
                 app.removeNativeEventFilter(self._filter)
             self._filter = None
 
-    def _dispatch(self, hotkey_id: int) -> None:
+    def _dispatch(self, hotkey_id: int, message_time: int = 0) -> None:
         name = self._ids.get(hotkey_id)
         if not name:
             return
 
+        #: ① 首选判据:消息时间戳相同 = 同一条 WM_HOTKEY 的重复投递
+        if message_time:
+            if self._last_message == (hotkey_id, message_time):
+                self.duplicates_ignored += 1
+                return
+            self._last_message = (hotkey_id, message_time)
+        else:
+            #: ② 兜底:拿不到时间戳时只压掉极短时间内的重复(不能吃掉人手连按)
+            now = time.monotonic()
+            if now - self._last_dispatch.get(hotkey_id, 0.0) < self._FALLBACK_DEDUPE_SECONDS:
+                self.duplicates_ignored += 1
+                return
+
         now = time.monotonic()
-        if now - self._last_dispatch.get(hotkey_id, 0.0) < self._DEDUPE_SECONDS:
-            self.duplicates_ignored += 1
-            return
         self._last_dispatch[hotkey_id] = now
         self.triggered.emit(name)

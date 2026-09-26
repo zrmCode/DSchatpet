@@ -92,7 +92,7 @@ def main() -> int:
     app.setQuitOnLastWindowClosed(True)
 
     window = PetWindow(cfg, model_dir, config_mod.find_model_json(model_dir), load_actions(model_dir))
-    window.persist_config = False
+    window.enable_test_mode("expression_state_test")
     window.show()
 
     shots = ROOT / "shots" / "expr"

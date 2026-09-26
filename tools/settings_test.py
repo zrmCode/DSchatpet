@@ -1,6 +1,10 @@
-﻿"""设置面板的验证:改值 -> 保存 -> 检查配置落盘 + 窗口/快捷键即时生效。
+"""设置面板的验证:改值 -> 保存 -> 检查配置落盘 + 窗口/快捷键即时生效。
 
-会先备份 ``config.json``,测试结束原样还原(这个坑之前踩过)。
+⚠️ **不再"备份真实 config.json → 跑测试 → 还原"**:这个过程一旦中断,就把用户配置留在
+测试值上了(真实事故:一个临时脚本调了面板的保存,把 chat_enabled 覆盖成 false,
+之后对话功能全都"莫名不可用")。现在 ``enable_test_mode()`` 会把写入路径
+(``window.config_path``)重定向到 ``.tmp`` 沙盒,真实文件全程不碰,
+测试结束时还会核对它的哈希没有变化。
 
 用法::
 
@@ -9,8 +13,8 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
-import shutil
 import sys
 from pathlib import Path
 
@@ -45,10 +49,13 @@ def main() -> int:
         except (AttributeError, ValueError):
             pass
 
-    cfg_path = config_mod.CONFIG_PATH
-    backup = cfg_path.with_suffix(".json.bak")
-    if cfg_path.is_file():
-        shutil.copy2(cfg_path, backup)
+    #: ⚠️ 不再"备份真实 config.json → 跑测试 → 还原"了:这个过程一旦中断就把用户配置留在测试值上
+    #: (真实事故:set 面板保存被临时脚本调用,chat_enabled 被覆盖成 false)。现在断言落在
+    #: ``window.config_path``(enable_test_mode 已把它重定向到 .tmp 沙盒),真实文件全程不碰。
+    sandbox_cfg = ROOT / ".tmp" / "testmode" / "settings_test" / "config.json"
+
+    real_before = (hashlib.sha256(config_mod.CONFIG_PATH.read_bytes()).hexdigest()
+                   if config_mod.CONFIG_PATH.is_file() else "<不存在>")
 
     model_dir = config_mod.find_model_dir()
     if model_dir is None:
@@ -66,7 +73,8 @@ def main() -> int:
     cfg = config_mod.Config.load()
     cfg.gaze_follow = False
     window = PetWindow(cfg, model_dir, config_mod.find_model_json(model_dir), load_actions(model_dir))
-    window.persist_config = False
+    window.enable_test_mode("settings_test")
+    cfg_path = window.config_path
     window.show()
 
     from pet.settings_dialog import SettingsDialog  # noqa: F401  (确保模块可导入)
@@ -147,10 +155,11 @@ def main() -> int:
             finish()
 
     def finish() -> None:
-        if backup.is_file():
-            shutil.copy2(backup, cfg_path)
-            backup.unlink()
-            print("\n  已还原测试前的 config.json")
+        real_after = (hashlib.sha256(config_mod.CONFIG_PATH.read_bytes()).hexdigest()
+                      if config_mod.CONFIG_PATH.is_file() else "<不存在>")
+        check("真实 config.json 全程未被触碰", real_after == real_before,
+              f"{real_before[:12]}… → {real_after[:12]}…")
+        print("  (写入都落在沙盒;真实文件哈希与测试前一致)")
         print(f"\n=== 通过 {_results['pass']} 项,失败 {_results['fail']} 项 ===")
         app.quit()
 

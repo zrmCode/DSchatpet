@@ -126,16 +126,25 @@ class PetModel:
     def _register_motions(self) -> None:
         """注册 7 个手动动画。
 
-        注意 ``LoadExtraMotion`` 的返回值是"本组已加载数量"而不是新动作的索引
-        (见 live2d-py 的 ``_v3cpp.pyi`` 文档),所以索引由我们自己按组计数维护,
-        前提是额外加载的动作会追加到组末尾 —— 这一点由 ``tools/probe.py`` 实测确认。
+        ⚠️ ``LoadExtraMotion`` 的返回值是**组内 0 起序号**(实测,见 ``tools/probe.py``),
+        不是"本组已加载数量"。以前这里忽略返回值、自己按组计数 —— 只要有一个动画加载失败,
+        后面所有动画的序号就整体错位,表现为"菜单里点了 A 却播了 B"。
+        现在优先采用引擎给的序号,只有在返回值不可用时才退回自己计数。
         """
         assert self.model is not None
         for action in self.actions:
             if action.kind == KIND_MOTION and action.file:
-                self.model.LoadExtraMotion(self.GROUP_ACTION, str(action.file))
-                index = self._group_counts.get(self.GROUP_ACTION, 0)
-                self._group_counts[self.GROUP_ACTION] = index + 1
+                returned = self.model.LoadExtraMotion(self.GROUP_ACTION, str(action.file))
+                fallback = self._group_counts.get(self.GROUP_ACTION, 0)
+                if isinstance(returned, int) and returned >= 0:
+                    index = returned
+                else:
+                    index = fallback
+                    from .applog import log
+
+                    log(f"动画:LoadExtraMotion 没返回有效序号({returned!r}),"
+                        f"按自身计数用 {index}")
+                self._group_counts[self.GROUP_ACTION] = max(index + 1, fallback)
                 self._motions[action.name] = index
 
     def _register_idle(self) -> None:

@@ -232,7 +232,7 @@ def part_b(args, model_dir: Path) -> None:
     app.setQuitOnLastWindowClosed(True)
 
     window = PetWindow(cfg, model_dir, config_mod.find_model_json(model_dir), load_actions(model_dir))
-    window.persist_config = False   # 别把假服务器地址与 test-key 写回用户的 config.json
+    window.enable_test_mode("chat_test")
     window.show()
 
     state = {"sent": False, "waited": 0.0}

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from typing import Callable
+
 from PySide6.QtCore import QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
@@ -223,6 +225,9 @@ class ChatInput(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        #: 提交回调:由桌宠窗口提供,返回 True 表示"接收方收下了这句话"。
+        #: 设了它就由它负责发送(不再走 ``submitted`` 信号),见 ``_on_return``。
+        self.on_submit: Callable[[str], bool] | None = None
         #: ``parent`` 传桌宠窗口:成为其附属窗口(owned window),
         #: **层级与桌宠一致**(不再自己单独置顶一层),并随桌宠一起显隐。
         self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint)
@@ -295,12 +300,25 @@ class ChatInput(QWidget):
     # ---------------------------------------------------------------- 交互
 
     def _on_return(self) -> None:
+        """回车提交。
+
+        ⚠️ 顺序很关键:以前是"**先**清空输入框并隐藏,**再** emit" —— 于是接收方因为
+        "上一句还在飞"或"没有可用后端"直接 return 时,用户刚打的字就被**静默丢弃**了
+        (没发出去、没进历史、也没还回输入框,只能重打)。现在先问接收方收不收,
+        **收下了才**清空收起;没收下就把文字留在框里、框也留着。
+        """
         text = self.edit.text().strip()
         if not text:
             return
+
+        if self.on_submit is not None:
+            if not self.on_submit(text):
+                return                      # 没被接收 → 文字与输入框都保留
+        else:
+            self.submitted.emit(text)
+
         self.edit.clear()
         self.hide()
-        self.submitted.emit(text)
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key_Escape:

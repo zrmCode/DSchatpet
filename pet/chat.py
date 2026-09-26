@@ -356,7 +356,7 @@ class ChatClient:
             else:
                 raise
 
-        return self._to_reply(data, want_tools)
+        return self._to_reply(data if isinstance(data, dict) else {}, want_tools)
 
     def _post(self, messages: list[dict], key: str, tools: list[dict] | None) -> dict:
         body: dict = {
@@ -415,16 +415,36 @@ class ChatClient:
         text_missing = False
 
         choices = data.get("choices") or []
-        message = (choices[0].get("message") or {}) if choices else {}
+        #: ⚠️ ``choices[0]`` 可能是 ``null``(实测有的中转站会回 ``{"choices":[null]}``),
+        #: 而 ``message`` 也可能是 ``null`` —— 以前直接 ``choices[0].get(...)`` 会抛
+        #: ``AttributeError``,绕过 ``ChatError`` 这套约定:错误没人接住,
+        #: 气泡永远停在「…」、``_chat_busy`` 也收不回来。
+        first = choices[0] if isinstance(choices, list) and choices else None
+        message = (first.get("message") or {}) if isinstance(first, dict) else {}
+        if not isinstance(message, dict):
+            message = {}
         content = message.get("content")
         text = content.strip() if isinstance(content, str) else ""
 
         for call in message.get("tool_calls") or []:
+            if not isinstance(call, dict):
+                continue
             function = call.get("function") or {}
+            if not isinstance(function, dict):
+                continue
             name = function.get("name")
-            try:
-                args = json.loads(function.get("arguments") or "{}")
-            except (json.JSONDecodeError, TypeError):
+            raw_args = function.get("arguments")
+            if isinstance(raw_args, dict):
+                args = raw_args               # 少数实现直接给对象而不是 JSON 字符串
+            else:
+                try:
+                    args = json.loads(raw_args or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    #: 坏 JSON 也别静默丢掉整条工具调用:记进 dropped 供日志排查
+                    dropped.append(f"{name or 'unknown'}(参数解析失败)")
+                    continue
+            if not isinstance(args, dict):
+                dropped.append(f"{name or 'unknown'}(参数不是对象)")
                 continue
             chosen = str(args.get("name") or "").strip()
             if name == "set_expression":
@@ -511,12 +531,17 @@ def _looks_like_tools_unsupported(detail: str) -> bool:
 def extract_reply(data: dict) -> str:
     """兼容各家(以及中转站)略有差异的返回结构。"""
     choices = data.get("choices") or []
-    if choices:
+    if isinstance(choices, list) and choices:
         choice = choices[0] or {}
-        message = choice.get("message") or {}
-        for candidate in (message.get("content"), choice.get("text")):
-            if isinstance(candidate, str) and candidate.strip():
-                return candidate.strip()
+        #: 有的实现会把 choice 写成字符串/数组 —— 非 dict 一律当"没有正文"处理,
+        #: 别抛 AttributeError(那会绕过 ChatError 约定,UI 状态收不回来)
+        if isinstance(choice, dict):
+            message = choice.get("message") or {}
+            if not isinstance(message, dict):
+                message = {}
+            for candidate in (message.get("content"), choice.get("text")):
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()
     for key in ("content", "output_text", "reply", "answer", "response"):
         value = data.get(key)
         if isinstance(value, str) and value.strip():

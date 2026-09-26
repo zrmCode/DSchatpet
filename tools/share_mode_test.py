@@ -141,7 +141,7 @@ def part_ui() -> None:
 
     model_dir = config_mod.find_model_dir()
     window = PetWindow(cfg, model_dir, config_mod.find_model_json(model_dir), load_actions(model_dir))
-    window.persist_config = False       # 绝不写回配置
+    window.enable_test_mode("share_mode_test")
     window.show()
     window.input_timer.stop()           # 隔离真实鼠标(input_timer 在 show 后才创建)
 

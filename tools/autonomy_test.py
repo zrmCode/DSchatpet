@@ -260,7 +260,7 @@ def part_ui(port: int) -> None:
 
     model_dir = config_mod.find_model_dir()
     window = PetWindow(cfg, model_dir, config_mod.find_model_json(model_dir), load_actions(model_dir))
-    window.persist_config = False
+    window.enable_test_mode("autonomy_test")
     window.show()
     window.input_timer.stop()
 
