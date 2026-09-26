@@ -70,8 +70,25 @@ def _set_ex_style(hwnd: int, style: int) -> None:
     )
 
 
+def is_click_through(hwnd: int) -> bool:
+    """窗口当前**真实**是否处于鼠标穿透(读扩展样式,不信任何缓存的状态)。
+
+    ⚠️ 为什么需要它:开关穿透的调用返回 False 有两种含义 —— "样式本来就对" 和
+    "环境不支持"。调用方以前把 False 当成失败、于是**不更新自己的状态位**,
+    一旦状态位与真实样式失同步,恢复路径就会被"状态没变就 return"短路掉,
+    窗口永久停在穿透态:用户点不到、画面照常在动、日志一条没有(实测事故)。
+    """
+    if not IS_WINDOWS or not hwnd:
+        return False
+    return bool(_ex_style(hwnd) & WS_EX_TRANSPARENT)
+
+
 def set_click_through(hwnd: int, enabled: bool) -> bool:
-    """开关鼠标穿透,返回是否真的改动了样式(用于避免每帧重复调 SetWindowPos)。"""
+    """开关鼠标穿透。
+
+    返回 True = 样式被改动了;False = 本来就已经是这个状态(不是失败)。
+    调用方要与真实状态比对时,请用 :func:`is_click_through`。
+    """
     if not IS_WINDOWS or not hwnd:
         return False
     style = _ex_style(hwnd)

@@ -208,6 +208,42 @@ def main() -> int:
           bool(flags & Qt.WindowType.WindowTransparentForInput), str(flags))
     window.chat_input.hide()
 
+    print("\n[8] 内部状态与真实样式失同步时必须能自动纠正(真实事故的根因)")
+    from pet import win32
+
+    hwnd = int(window.winId())
+    #: 制造失同步:窗口真的开了穿透,但内部状态位说是"可交互"
+    win32.set_click_through(hwnd, True)
+    pump(0.2)
+    window._click_through_state = False
+    check("前置:窗口真实处于穿透、而内部状态说没有",
+          win32.is_click_through(hwnd) and not window._click_through_state)
+    window._set_click_through(False)          # 光标移到模型上时走的就是这一步
+    pump(0.2)
+    check("调用后窗口真的恢复可交互(旧代码会被提前 return 短路)",
+          not win32.is_click_through(hwnd), "窗口仍是穿透状态")
+    check("内部状态也同步了", window._click_through_state is False)
+
+    #: 反向:窗口可交互,内部状态说"有穿透"
+    win32.set_click_through(hwnd, False)
+    pump(0.2)
+    window._click_through_state = True
+    window._set_click_through(True)
+    pump(0.2)
+    check("反向失同步也能纠正",
+          win32.is_click_through(hwnd) and window._click_through_state is True)
+
+    print("\n[9] 输入轮询停摆要能被渲染心跳救回来")
+    window.auto_restart_input_timer = True      # 测试里默认关着,这一节要显式打开
+    window.input_timer.stop()
+    check("前置:输入轮询已停止", not window.input_timer.isActive())
+    window._frames = 59                        # 下一帧就到达心跳检查点
+    window.paintGL()                           # 直接驱动一帧
+    pump(0.3)
+    check("渲染心跳把输入轮询重启了", window.input_timer.isActive())
+    log_tail = (ROOT / "pet.log").read_text(encoding="utf-8", errors="replace")[-600:]
+    check("并在日志里留了痕", "输入轮询定时器已停止" in log_tail, repr(log_tail[-160:]))
+
     window.hide()
     window.close()
     app.quit()

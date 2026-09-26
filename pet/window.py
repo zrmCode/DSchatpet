@@ -73,7 +73,13 @@ ALPHA_HIT_THRESHOLD = 10
 
 #: 穿透开着、光标一直在窗口内却始终判为"未命中"多久之后强制恢复可点击(秒)。
 #: 兜住"像素采样坏掉 → 窗口永久鼠标穿透 → 用户再也点不到它"这种死局。
-CLICK_THROUGH_STUCK_SECONDS = 1.5
+#: ⚠️ 别设太短:光标停在窗口的**空白处**超过一两秒是完全正常的(那里本来就该穿透),
+#: 设短了会在日常使用中频繁误触发(把整窗变成可点击)。真正的死锁由状态对齐兜住,
+#: 这里只是最后一道保险,所以给足 8 秒;另外托盘菜单还有手动救援入口。
+CLICK_THROUGH_STUCK_SECONDS = 8.0
+
+#: 输入轮询间隔(毫秒)。点击穿透判定、悬停弹输入框、待机兜底都由它驱动。
+INPUT_POLL_MS = 50
 
 #: 鼠标离开后延迟多久隐藏聊天输入框(毫秒)—— 避免在边缘抖动时闪来闪去
 CHAT_HIDE_DELAY_MS = 500
@@ -197,6 +203,11 @@ class PetWindow(QOpenGLWidget):
         self._stuck_since = 0.0
         #: 像素采样是否可信;判为不可信时保持"可点击",不再自动开启穿透
         self._click_through_suspect = False
+        #: 输入轮询里抛异常的累计次数(限频落盘,便于事后定位"静默失效")
+        self._tick_errors = 0
+        #: 是否允许渲染心跳自动重启输入轮询。
+        #: 测试会主动 stop 它来用合成坐标驱动悬停判定,所以 enable_test_mode() 会关掉它。
+        self.auto_restart_input_timer = True
         #: 上一帧采到的 alpha 是否是**有效读数**(而不是"光标在窗外"或"读失败")
         self._alpha_valid = True
 
@@ -256,7 +267,7 @@ class PetWindow(QOpenGLWidget):
 
         self.input_timer = QTimer(self)
         self.input_timer.timeout.connect(self._tick_input)
-        self.input_timer.start(50)
+        self.input_timer.start(INPUT_POLL_MS)
 
         self.fps_timer = QTimer(self)
         self.fps_timer.timeout.connect(self._tick_fps)
@@ -287,6 +298,16 @@ class PetWindow(QOpenGLWidget):
 
         self._sample_cursor_alpha()
         self._frames += 1
+
+        #: 心跳自愈:渲染循环是唯一"确定活着"的路径(画面一直在动),用它看住输入轮询。
+        #: 输入轮询一旦停摆,点击穿透判定/悬停弹输入框/待机兜底全都会静默失效,
+        #: 而且从外部完全看不出来(实测:桌宠照常动,但点什么都没反应、日志也没有)。
+        if (self.auto_restart_input_timer and self._frames % 60 == 0
+                and not self.input_timer.isActive()):
+            from .applog import log
+
+            log("心跳:输入轮询定时器已停止,自动重启(点击穿透与悬停弹出都靠它)")
+            self.input_timer.start(INPUT_POLL_MS)
 
     def _sample_cursor_alpha(self) -> None:
         """读鼠标所在像素的 alpha,用来判断"点在不在模型身上"。
@@ -332,6 +353,24 @@ class PetWindow(QOpenGLWidget):
     # ================================================================ 定时任务
 
     def _tick_input(self) -> None:
+        """输入轮询(每 50ms 一次):点击穿透判定、悬停弹输入框、待机兜底都靠它。
+
+        ⚠️ 整段包了 try/except:这是个每 50ms 跑一次的槽函数,一旦抛异常,
+        pythonw/打包版**没有控制台**,PySide6 打出的 traceback 直接消失 ——
+        表现就是"桌宠还画着、但点什么都没反应,而且日志里一个字都没有"。
+        实测事故:用户报"点击无反应",排查发现这条轮询整条链停摆。
+        现在出错会落盘(限频),并且由渲染心跳自动重启(见 ``paintGL``)。
+        """
+        try:
+            self._tick_input_impl()
+        except Exception as exc:                      # noqa: BLE001 - 兜住一切,别让它静默死掉
+            self._tick_errors += 1
+            if self._tick_errors <= 3 or self._tick_errors % 500 == 1:
+                from .applog import log
+
+                log(f"输入轮询出错(第 {self._tick_errors} 次):{type(exc).__name__}: {exc}")
+
+    def _tick_input_impl(self) -> None:
         if not self.isVisible():
             return
         if self.cfg.gaze_follow:
@@ -566,15 +605,34 @@ class PetWindow(QOpenGLWidget):
         self.move(geo.right() - self.width() - margin, geo.bottom() - self.height() - margin)
 
     def _set_click_through(self, enabled: bool) -> None:
-        if enabled == self._click_through_state:
-            return
-        if win32.set_click_through(int(self.winId()), enabled):
-            self._click_through_state = enabled
-            #: 状态变化落日志:这类问题(卡在穿透里点不到)以前完全没法从日志看出来
-            if not enabled:
-                self._stuck_since = 0.0
-            from .applog import log
+        """把窗口设成 / 取消鼠标穿透,并让内部状态与**真实样式**保持一致。
 
+        ⚠️ 这里以前是"内部状态没变就提前 return,并且只在 win32 调用返回 True 时才
+        更新内部状态":只要内部状态与窗口真实样式失同步(设置样式失败、或 Qt 重建了
+        原生窗口),恢复路径就会被那条提前 return 短路 —— 窗口**永久停在穿透态**,
+        于是用户点不到、拖不动、右键也弹不出菜单,而日志里一条记录都没有
+        (实测事故:用户报"点击没反应、不能拖动、打不开设置",根因就是它)。
+        现在:每次拿真实样式比对,不一致就强制对齐,并对齐失败写日志。
+        """
+        hwnd = int(self.winId())
+        actual = win32.is_click_through(hwnd)
+        if enabled == self._click_through_state and actual == enabled:
+            return                                   # 内部状态与真实样式都一致:确实没变化
+
+        if actual != enabled:
+            win32.set_click_through(hwnd, enabled)
+
+        mismatched = win32.is_click_through(hwnd) != enabled
+        self._click_through_state = enabled          # 无条件同步内部状态
+        if not enabled:
+            self._stuck_since = 0.0
+
+        from .applog import log
+
+        if mismatched:
+            log(f"点击穿透:设置失败(期望 {'开启' if enabled else '关闭'},"
+                f"窗口实际仍是{'开启' if not enabled else '关闭'})—— 下次轮询会重试")
+        else:
             log(f"点击穿透:{'开启(鼠标落到桌面)' if enabled else '关闭(可交互)'}")
 
     # --- 供托盘 / 菜单调用 ------------------------------------------------
@@ -673,6 +731,8 @@ class PetWindow(QOpenGLWidget):
         #: 配置写入路径也重定向:让"保存"这条路径在测试里**照常走通**,
         #: 只是落在沙盒文件上 —— 比"测试模式干脆不写盘"覆盖更完整
         self.config_path = sandbox / "config.json"
+        #: 测试自己控制输入轮询(会 stop 掉它),别让心跳把它重启回来
+        self.auto_restart_input_timer = False
         self.profile_path = sandbox / "profile.json"
         self.profile = Profile()
         self.memories = MemoryStore(sandbox / "memories.jsonl", cap=self.cfg.memory_max_items)
