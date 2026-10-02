@@ -283,17 +283,15 @@ class SettingsDialog(QDialog):
         self.memory_inject_chars = QSpinBox()
         self.memory_inject_chars.setRange(200, 4000)
         self.memory_inject_chars.setSuffix(" 字")
-        self.pet_name = QLineEdit()
-        self.pet_name.setPlaceholderText("它的名字")
-        self.user_title = QLineEdit()
-        self.user_title.setPlaceholderText("它怎么称呼你(如:主人 / 你 / 名字)")
+        #: ⚠️ 「它的名字」与「怎么称呼你」**故意不进设置**:那是养成/人设的一部分
+        #: (它叫 DS鲸鱼娘、怎么称呼你由人设与相处决定),不该当成配置项让人随手改。
+        #: 要改就编辑 memory/profile.json 的 name / user_title。
 
         form.addRow("", self.memory_enabled)
         form.addRow("自动抽取频率", self.memory_extract_every)
         form.addRow("每次注入", self.memory_inject_items)
         form.addRow("注入上限", self.memory_inject_chars)
-        form.addRow("它的名字", self.pet_name)
-        form.addRow("怎么称呼你", self.user_title)
+        form.addRow("", _fixed_hint("它的名字、怎么称呼你属于人设,不进设置(存在 memory/profile.json)"))
         layout.addLayout(form)
 
         self.memory_stats = QLabel("")
@@ -484,9 +482,7 @@ class SettingsDialog(QDialog):
         self.memory_extract_every.setValue(cfg.memory_extract_every)
         self.memory_inject_items.setValue(cfg.memory_inject_items)
         self.memory_inject_chars.setValue(cfg.memory_inject_chars)
-        if self.owner is not None and hasattr(self.owner, "profile"):
-            self.pet_name.setText(self.owner.profile.name)
-            self.user_title.setText(self.owner.profile.user_title)
+        #: 「它的名字 / 怎么称呼你」已经不进面板,这里也不再回填对应控件
 
         # 服务商下拉按当前配置回填(猜不出来就是"自定义")
         index = self.provider.findData(self._detect_provider())
@@ -534,9 +530,8 @@ class SettingsDialog(QDialog):
         cfg.memory_extract_every = self.memory_extract_every.value()
         cfg.memory_inject_items = self.memory_inject_items.value()
         cfg.memory_inject_chars = self.memory_inject_chars.value()
-        if self.owner is not None and hasattr(self.owner, "profile"):
-            self.owner.profile.name = self.pet_name.text().strip() or self.owner.profile.name
-            self.owner.profile.user_title = self.user_title.text().strip() or "你"
+        #: ⚠️ 不要在这里写 ``owner.profile.name`` / ``user_title``:面板已经没有这两项了,
+        #: 再写就等于每次保存都把档案里的称呼重置回代码里的默认值。
 
         cfg.hotkey_toggle_visible = self.hotkey_toggle_visible.text().strip()
         cfg.hotkey_open_chat = self.hotkey_open_chat.text().strip()
