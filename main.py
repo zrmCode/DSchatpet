@@ -117,9 +117,11 @@ def _run_qt_probe(app: QApplication, cfg, model_dir: Path, model_json: Path, act
 
 def build_tray(app: QApplication, window: PetWindow, icon_path: Path) -> QSystemTrayIcon:
     """托盘图标:显示/隐藏、完整动作菜单、退出。"""
+    from pet import __version__
+
     icon = QIcon(str(icon_path)) if icon_path.is_file() else QIcon()
     tray = QSystemTrayIcon(icon, app)
-    tray.setToolTip("DS鲸鱼娘 桌宠")
+    tray.setToolTip(f"DS鲸鱼娘 桌宠 v{__version__}")
 
     menu = QMenu()
     menu.addAction("显示 / 隐藏", window.toggle_visible)
@@ -184,7 +186,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     cfg = config_mod.Config.load()
-    _log(f"启动:frozen={bool(getattr(sys, 'frozen', False))} 可写目录={config_mod.APP_DIR}")
+    from pet import __version__
+
+    _log(f"启动:版本 v{__version__} frozen={bool(getattr(sys, 'frozen', False))} "
+         f"可写目录={config_mod.APP_DIR}")
     model_dir = config_mod.find_model_dir(args.model_dir or cfg.model_dir or None)
     if model_dir is None:
         _explain_missing_model()

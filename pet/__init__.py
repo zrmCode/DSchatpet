@@ -9,3 +9,8 @@
 """
 
 __all__ = ["config", "actions", "model", "win32", "window"]
+
+#: 版本号(唯一来源)。发 Release 时 tag 用 ``v`` + 这个值(如 v0.1.0);
+#: build/installer.iss 的 AppVersion 也跟它保持一致。
+#: 改动这里同时改 installer.iss —— tools/preflight_check.py 会核对两者是否一致。
+__version__ = "0.1.0"

@@ -235,6 +235,23 @@ def main() -> int:
               "缺 BOM:Windows PowerShell 5.1 会按 ANSI 读 → 中文字符串乱码 → 脚本语法直接坏掉"
               "(实测踩过:补 BOM 即可)")
 
+    print("\n[8] 版本号三处一致(代码 / 安装包 / Release 模板)")
+    import re as _re
+
+    #: 这里**不 import 本项目包**(本脚本刻意保持独立、不依赖运行环境),直接读源码里的定义
+    init_text = (ROOT / "pet" / "__init__.py").read_text(encoding="utf-8")
+    ver_match = _re.search(r'^__version__\s*=\s*"([^"]+)"', init_text, _re.M)
+    version = ver_match.group(1) if ver_match else ""
+    check(f"pet/__init__.py 里有版本号({version or '没找到'})", bool(version))
+    iss_path = ROOT / "build" / "installer.iss"
+    found = _re.search(r'#define AppVersion "([^"]+)"', iss_path.read_text(encoding="utf-8"))
+    check("installer.iss 的 AppVersion 与代码一致",
+          bool(found) and found.group(1) == version,
+          f"安装包写的是 {found.group(1) if found else '(没找到)'},代码是 {version or '(空)'}")
+    template = (ROOT / "docs" / "RELEASE_TEMPLATE.md").read_text(encoding="utf-8")
+    check(f"Release 模板里的 tag 是 v{version or '(空)'}", bool(version) and f"v{version}" in template,
+          "模板里的版本号没跟上代码")
+
     print(f"\n=== 通过 {_results['pass']} 项,注意 {_results['warn']} 项,失败 {_results['fail']} 项 ===")
     if _results["fail"]:
         print("❌ 先处理上面的 [FAIL] 再发布。")

@@ -228,12 +228,15 @@ class SettingsDialog(QDialog):
         # --- 系统 ---
         system = QGroupBox("系统")
         system_form = QFormLayout(system)
+        from pet import __version__
+
         self.hotkey_toggle_visible = QLineEdit()
         self.hotkey_open_chat = QLineEdit()
         self.autostart = QCheckBox("开机自启")
         system_form.addRow("显示/隐藏快捷键", self.hotkey_toggle_visible)
         system_form.addRow("聊天快捷键", self.hotkey_open_chat)
         system_form.addRow("", self.autostart)
+        system_form.addRow("版本", QLabel(f"v{__version__}"))
         page_idle_layout.addWidget(system)
 
         hint = QLabel("快捷键写法:ctrl+alt+W、shift+win+F5;留空表示不注册。")

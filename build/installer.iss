@@ -11,7 +11,7 @@
 
 #define AppName "DS鲸鱼娘桌宠"
 #define AppNameEn "DS Whale Pet"
-#define AppVersion "1.0.0"
+#define AppVersion "0.1.0"
 #define AppPublisher "Small-tailqwq / 氵六青"
 ; ⚠️ exe 文件名必须纯 ASCII:实测 exe 名含中文时,冻结后的 PySide6 应用一创建窗口就崩
 ;    (目录名含中文没事,所以 DefaultDirName 用中文也行;这里统一用 ASCII 更稳)
