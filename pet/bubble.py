@@ -68,6 +68,36 @@ def _screen_geometry(anchor: QRect) -> QRect | None:
     return screen.availableGeometry() if screen else None
 
 
+def _sibling_rect(widget: QWidget, attr: str) -> QRect | None:
+    """取"另一个同属桌宠的小窗口"的矩形,用于互相避让(气泡 ↔ 输入框)。
+
+    两者都是 ``PetWindow`` 的附属窗口,所以从 parent 上就能拿到对方;对方没显示
+    就返回 None(不需要避让)。
+    """
+    parent = widget.parent()
+    other = getattr(parent, attr, None) if parent is not None else None
+    if other is None or other is widget:
+        return None
+    try:
+        return other.frameGeometry() if other.isVisible() else None
+    except RuntimeError:
+        return None                     # 对象已被 Qt 回收
+
+
+def _pick_position(candidates: list[int], x: int, width: int, height: int,
+                   geo: QRect | None, avoid: QRect | None) -> int:
+    """从若干候选 y 里挑第一个"在屏幕内且不与 avoid 重叠"的;都不满足则用第一个。"""
+    for y in candidates:
+        if avoid is not None and QRect(x, y, width, height).intersects(avoid):
+            continue
+        if geo is not None:
+            rect = QRect(x, y, width, height)
+            if rect.top() < geo.top() or rect.bottom() > geo.bottom():
+                continue
+        return y
+    return candidates[0]
+
+
 class Bubble(QWidget):
     """桌宠的说话气泡。
 
@@ -195,13 +225,29 @@ class Bubble(QWidget):
         return document.size().height()
 
     def place(self, anchor: QRect) -> None:
-        """贴着桌宠上方居中显示;上方放不下就改放下面。"""
+        """贴着桌宠上方居中显示;上方放不下就改放下面。
+
+        ⚠️ 还要**避开输入框**:气泡在头顶放不下时会跑到桌宠下方,而输入框本来就在
+        下方 —— 两者就叠在一起了(用户报的"聊天和回答重叠")。这里按候选位置依次
+        挑第一个"在屏幕内、且不与输入框重叠"的。
+        """
         geo = _screen_geometry(anchor)
+        gap = 10
+        avoid = _sibling_rect(self, "chat_input")
         x = anchor.center().x() - self.width() // 2
-        y = anchor.top() - self.height() - 10
+        above = anchor.top() - self.height() - gap
+        below = anchor.bottom() + gap
+
+        if geo is not None and above < geo.top():
+            candidates = [below, above]          # 头顶放不下 → 先在下方,再退回头顶(靠夹取)
+        else:
+            candidates = [above, below]          # 默认在头顶
+        if avoid is not None:
+            # 给输入框让路:先试它下面,再试它上面
+            candidates += [avoid.bottom() + gap, avoid.top() - self.height() - gap]
+
+        y = _pick_position(candidates, x, self.width(), self.height(), geo, avoid)
         if geo is not None:
-            if y < geo.top():
-                y = anchor.bottom() + 10
             x = max(geo.left() + 4, min(x, geo.right() - self.width() - 4))
             y = max(geo.top() + 4, min(y, geo.bottom() - self.height() - 4))
         self.move(int(x), int(y))
@@ -282,14 +328,14 @@ class ChatInput(QWidget):
         gap = self.gap_below
         below = anchor.bottom() + gap
         above = anchor.top() - self.height() - gap
+        avoid = _sibling_rect(self, "bubble")        # 别和回话气泡叠在一起
         if geo is None:
             y = below
-        elif below + self.height() <= geo.bottom() + 1:
-            y = below                      # 下方放得下,且不会压住桌宠
-        elif above >= geo.top() - 1:
-            y = above                      # 改放上方,同样不重叠
         else:
-            y = max(geo.top() + 4, geo.bottom() - self.height() - 4)   # 只能夹取
+            candidates = [below, above]
+            if avoid is not None:
+                candidates += [avoid.bottom() + gap, avoid.top() - self.height() - gap]
+            y = _pick_position(candidates, x, self.width(), self.height(), geo, avoid)
         self.move(int(x), int(y))
 
     def show_passive(self, anchor: QRect) -> None:
