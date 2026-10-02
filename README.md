@@ -285,19 +285,25 @@ DS鲸鱼娘桌宠/
 
 ## 配置(`config.json`)
 
+> **设置面板里改不到的项**:以下几项是程序按模型实测调好的值,故意**不放进面板**
+> (放进去只会把自己弄坏),要微调就直接编辑这个文件 ——
+> `window_height`、`scale`(缩放 1.0 会把模型右边缘切掉)、`fps`、
+> `gaze_strength`、`gaze_smoothing`(视线跟随调参)、
+> `idle_action_interval`、`idle_thought_interval`(待机节奏)。
+
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `window_height` | 373 | 窗口高度(像素),宽度按模型画布比例推得。373 ≈ 原先 560 的 **2/3**(实测原先有点大、挡屏幕) |
-| `scale` | 0.85 | 模型缩放。**该模型内容偏右且贴边,1.0 会在右边缘被裁切**,0.85 实测四周留白正常 |
+| `window_height` | 373 | 窗口高度(像素),宽度按模型画布比例推得。373 ≈ 原先 560 的 **2/3**(实测原先有点大、挡屏幕) **(面板不可改)** |
+| `scale` | 0.85 | 模型缩放。**该模型内容偏右且贴边,1.0 会在右边缘被裁切**,0.85 实测四周留白正常 **(面板不可改)** |
 | `opacity` | 1.0 | 整体不透明度 |
 | `always_on_top` | true | 置顶 |
 | `click_through` | true | 透明区域点击穿透 |
 | `gaze_follow` | true | 视线跟随鼠标 |
-| `gaze_strength` | 1.0 | 跟随幅度 |
-| `gaze_smoothing` | 0.18 | 平滑系数,越小越"迟钝" |
+| `gaze_strength` | 1.0 | 跟随幅度 **(面板不可改)** |
+| `gaze_smoothing` | 0.18 | 平滑系数,越小越"迟钝" **(面板不可改)** |
 | `idle_motion` | true | 待机动画循环 |
 | `poke_reaction` | true | 点一下时让 AI 理解并回应(说话 + 表情)。原「点一下随机变表情」已取消 |
-| `fps` | 60 | 帧率上限 |
+| `fps` | 60 | 帧率上限 **(面板不可改)** |
 | `model_dir` | "" | 空 = 自动探测 |
 | `window_x` / `window_y` | null | 窗口位置,null = 首次启动贴右下角 |
 | `chat_enabled` | true | 是否启用对话 |
@@ -316,9 +322,9 @@ DS鲸鱼娘桌宠/
 | `chat_model_actions` | true | 让模型自己选表情/动作(与语气配合) |
 | `chat_use_tools` | true | 优先用工具调用;接口不支持时自动改用文字指令 |
 | `idle_autonomy` | true | 待机时自己换表情 / 做小动作(免费、无需 Key) |
-| `idle_action_interval` | 45 | 随机行为的平均间隔(秒),实际按 0.6~1.6 倍随机 |
+| `idle_action_interval` | 45 | 随机行为的平均间隔(秒),实际按 0.6~1.6 倍随机 **(面板不可改)** |
 | `idle_llm_thoughts` | false | 待机时让模型自己"想事情"(**会消耗少量 API 费用**,默认关) |
-| `idle_thought_interval` | 300 | "想事情"的最短间隔(秒) |
+| `idle_thought_interval` | 300 | "想事情"的最短间隔(秒) **(面板不可改)** |
 | `idle_thought_bubble` | true | 把内心独白显示在气泡里(关掉就只做动作) |
 | `memory_enabled` | true | 记忆与养成总开关(档案只存本机) |
 | `memory_extract_every` | 5 | 每 N 轮对话自动抽取长期记忆(0 = 不自动抽) |

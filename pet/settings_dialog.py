@@ -42,6 +42,14 @@ from .config import Config
 PROVIDER_ORDER = ["deepseek", "openai", "ollama", "custom"]
 
 
+def _fixed_hint(text: str) -> QLabel:
+    """灰色小字提示:说明某项参数为什么不给改(免得用户到处找)。"""
+    label = QLabel(text)
+    label.setWordWrap(True)
+    label.setStyleSheet("color: #888; font-size: 11px;")
+    return label
+
+
 class _ProbeWorker(QThread):
     """后台跑一次真实对话,避免把设置面板卡住。"""
 
@@ -87,41 +95,28 @@ class SettingsDialog(QDialog):
         page_look_layout = QVBoxLayout(page_look)
 
         # --- 外观 ---
+        #: ⚠️ 窗口高度 / 模型缩放 / 帧率上限**故意不放进面板**:这三个是实测调好的值
+        #: (缩放 1.0 会把模型右边缘切掉;帧率调高只会发热掉帧),让用户改只会改坏自己。
+        #: 想微调就直接改 config.json 里的 window_height / scale / fps。
         look = QGroupBox("外观")
         look_form = QFormLayout(look)
-        self.window_height = QSpinBox()
-        self.window_height.setRange(200, 1600)
-        self.window_height.setSuffix(" px")
-        self.scale = QDoubleSpinBox()
-        self.scale.setRange(0.2, 3.0)
-        self.scale.setSingleStep(0.05)
-        self.scale.setDecimals(2)
         self.opacity = QDoubleSpinBox()
         self.opacity.setRange(0.2, 1.0)
         self.opacity.setSingleStep(0.05)
         self.opacity.setDecimals(2)
-        self.fps = QSpinBox()
-        self.fps.setRange(10, 144)
-        self.fps.setSuffix(" fps")
         self.always_on_top = QCheckBox("窗口置顶")
-        look_form.addRow("窗口高度", self.window_height)
-        look_form.addRow("模型缩放", self.scale)
         look_form.addRow("不透明度", self.opacity)
-        look_form.addRow("帧率上限", self.fps)
         look_form.addRow("", self.always_on_top)
+        look_form.addRow("", _fixed_hint("尺寸、缩放、帧率由程序按模型实测决定(不进面板)"))
         page_look_layout.addWidget(look)
 
         # --- 交互 ---
+        #: 视线跟随的两个调参(跟随幅度 / 平滑系数)同样不进面板:调过头会"眼睛乱飘"
+        #: 或看起来像卡住,开关本身留着就够了。
         interact = QGroupBox("交互")
         interact_form = QFormLayout(interact)
         self.click_through = QCheckBox("透明区域点击穿透(不挡桌面操作)")
         self.gaze_follow = QCheckBox("视线跟随鼠标")
-        self.gaze_strength = QDoubleSpinBox()
-        self.gaze_strength.setRange(0.0, 1.5)
-        self.gaze_strength.setSingleStep(0.1)
-        self.gaze_smoothing = QDoubleSpinBox()
-        self.gaze_smoothing.setRange(0.02, 1.0)
-        self.gaze_smoothing.setSingleStep(0.02)
         self.idle_motion = QCheckBox("待机动画循环")
         self.poke_reaction = QCheckBox("点一下时让 AI 回应(说话 + 表情)")
         self.poke_reaction.setToolTip(
@@ -131,10 +126,9 @@ class SettingsDialog(QDialog):
         )
         interact_form.addRow("", self.click_through)
         interact_form.addRow("", self.gaze_follow)
-        interact_form.addRow("跟随幅度", self.gaze_strength)
-        interact_form.addRow("平滑系数", self.gaze_smoothing)
         interact_form.addRow("", self.idle_motion)
         interact_form.addRow("", self.poke_reaction)
+        interact_form.addRow("", _fixed_hint("视线跟随的幅度/平滑由程序调好,只留开关"))
         page_look_layout.addWidget(interact)
 
         # --- 对话 ---
@@ -195,28 +189,24 @@ class SettingsDialog(QDialog):
         page_chat_layout.addWidget(chat)
 
         # --- 待机与自主行为 ---
+        #: 待机节奏的两个间隔(随机行为间隔 / 思考间隔)同样不进面板:太密会显得吵、
+        #: 「想事情」太密还会白花钱。要调就改 config.json 的
+        #: idle_action_interval / idle_thought_interval。
         idle = QGroupBox("待机与自主行为")
         idle_form = QFormLayout(idle)
         self.chat_model_actions = QCheckBox("让模型自己选表情/动作(配合语气)")
         self.chat_use_tools = QCheckBox("优先用工具调用(接口不支持时自动改用文字指令)")
         self.idle_autonomy = QCheckBox("待机时自己换表情 / 做小动作(免费、无需 Key)")
-        self.idle_action_interval = QSpinBox()
-        self.idle_action_interval.setRange(5, 1800)
-        self.idle_action_interval.setSuffix(" 秒(平均)")
         self.idle_llm_thoughts = QCheckBox("待机时让模型自己「想事情」—— 会消耗少量 API 费用")
-        self.idle_thought_interval = QSpinBox()
-        self.idle_thought_interval.setRange(60, 7200)
-        self.idle_thought_interval.setSuffix(" 秒(最短)")
         self.idle_thought_bubble = QCheckBox("把内心独白显示在气泡里(关掉就只做动作)")
-        idle_hint = QLabel("「想事情」需要可用的对话后端(Key 或本地模型),没有时会自动跳过,不会报错。")
+        idle_hint = QLabel("「想事情」需要可用的对话后端(Key 或本地模型),没有时会自动跳过,不会报错。\n"
+                           "待机节奏(多久动一次、多久想一次)由程序控制,不进面板。")
         idle_hint.setWordWrap(True)
         idle_hint.setStyleSheet("color: #888;")
         idle_form.addRow("", self.chat_model_actions)
         idle_form.addRow("", self.chat_use_tools)
         idle_form.addRow("", self.idle_autonomy)
-        idle_form.addRow("随机行为间隔", self.idle_action_interval)
         idle_form.addRow("", self.idle_llm_thoughts)
-        idle_form.addRow("思考间隔", self.idle_thought_interval)
         idle_form.addRow("", self.idle_thought_bubble)
         idle_form.addRow("", idle_hint)
 
@@ -453,17 +443,17 @@ class SettingsDialog(QDialog):
                 self.chat_api_key.setPlaceholderText("留空则用环境变量或 DSH 凭据")
 
     def _load_values(self) -> None:
+        """把配置回填到面板。
+
+        ⚠️ 面板只回填**可改**的项。像窗口高度/缩放/帧率、视线跟随调参、待机节奏这些
+        已经不进面板了,这里也**不要**再去碰对应控件(以前是有的,删控件时必须一起清)。
+        """
         cfg = self.cfg
-        self.window_height.setValue(cfg.window_height)
-        self.scale.setValue(cfg.scale)
         self.opacity.setValue(cfg.opacity)
-        self.fps.setValue(cfg.fps)
         self.always_on_top.setChecked(cfg.always_on_top)
 
         self.click_through.setChecked(cfg.click_through)
         self.gaze_follow.setChecked(cfg.gaze_follow)
-        self.gaze_strength.setValue(cfg.gaze_strength)
-        self.gaze_smoothing.setValue(cfg.gaze_smoothing)
         self.idle_motion.setChecked(cfg.idle_motion)
         self.poke_reaction.setChecked(cfg.poke_reaction)
 
@@ -486,9 +476,9 @@ class SettingsDialog(QDialog):
         self.chat_model_actions.setChecked(cfg.chat_model_actions)
         self.chat_use_tools.setChecked(cfg.chat_use_tools)
         self.idle_autonomy.setChecked(cfg.idle_autonomy)
-        self.idle_action_interval.setValue(cfg.idle_action_interval)
+
         self.idle_llm_thoughts.setChecked(cfg.idle_llm_thoughts)
-        self.idle_thought_interval.setValue(cfg.idle_thought_interval)
+
         self.idle_thought_bubble.setChecked(cfg.idle_thought_bubble)
 
         self.memory_enabled.setChecked(cfg.memory_enabled)
@@ -510,18 +500,18 @@ class SettingsDialog(QDialog):
         self.autostart.setChecked(cfg.autostart)
 
     def _collect(self) -> None:
-        """把控件里的值写回 cfg(不落盘)。"""
+        """把控件里的值写回 cfg(不落盘)。
+
+        ⚠️ 只写**面板上真的能改**的项:布局尺寸/缩放/帧率、视线跟随调参、待机节奏
+        已经从面板移除,这里就**不要**再去覆盖它们 —— 否则一按保存就会把用户
+        (或程序)手调过的值重置成默认值。
+        """
         cfg = self.cfg
-        cfg.window_height = self.window_height.value()
-        cfg.scale = self.scale.value()
         cfg.opacity = self.opacity.value()
-        cfg.fps = self.fps.value()
         cfg.always_on_top = self.always_on_top.isChecked()
 
         cfg.click_through = self.click_through.isChecked()
         cfg.gaze_follow = self.gaze_follow.isChecked()
-        cfg.gaze_strength = self.gaze_strength.value()
-        cfg.gaze_smoothing = self.gaze_smoothing.value()
         cfg.idle_motion = self.idle_motion.isChecked()
         cfg.poke_reaction = self.poke_reaction.isChecked()
 
@@ -540,9 +530,7 @@ class SettingsDialog(QDialog):
         cfg.chat_model_actions = self.chat_model_actions.isChecked()
         cfg.chat_use_tools = self.chat_use_tools.isChecked()
         cfg.idle_autonomy = self.idle_autonomy.isChecked()
-        cfg.idle_action_interval = self.idle_action_interval.value()
         cfg.idle_llm_thoughts = self.idle_llm_thoughts.isChecked()
-        cfg.idle_thought_interval = self.idle_thought_interval.value()
         cfg.idle_thought_bubble = self.idle_thought_bubble.isChecked()
 
         cfg.memory_enabled = self.memory_enabled.isChecked()
