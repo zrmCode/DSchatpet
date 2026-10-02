@@ -124,6 +124,18 @@ if ($leak) {
     Write-Host '  ✅ 安全检查:包内未发现任何 API Key'
 }
 
+# 4) 压成免安装 zip:**文件名带版本号**(不带的话根本分不清哪个是新包)
+$versionLine = Select-String -Path (Join-Path $root 'pet\__init__.py') -Pattern '__version__\s*=\s*"([^"]+)"'
+$version = if ($versionLine) { $versionLine.Matches[0].Groups[1].Value } else { '0.0.0' }
+$zipPath = Join-Path $root "dist\DSchatpet-v$version-windows-x64.zip"
+Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+Write-Host '=== 4.5/5 压免安装 zip ==='
+Compress-Archive -Path (Join-Path $distDir '*') -DestinationPath $zipPath -CompressionLevel Optimal
+$zipFile = Get-Item $zipPath
+$sha = (Get-FileHash $zipPath -Algorithm SHA256).Hash
+Write-Host ("  已生成 {0}({1} MB)" -f $zipFile.Name, [math]::Round($zipFile.Length / 1MB, 1))
+Write-Host "  SHA256 = $sha"
+Write-Host "  (发 Release 时:tag 用 v$version,附件传这个 zip,说明从 docs\RELEASE_TEMPLATE.md 里粘)"
 if ($SkipInstaller) { Write-Host '=== 已跳过安装包步骤 ==='; exit 0 }
 
 Write-Host '=== 5/5 生成安装包(需要 Inno Setup)=='

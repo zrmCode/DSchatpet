@@ -1,7 +1,7 @@
 # Release 说明模板(复制到 GitHub Release 里,按需改版本号)
 
-> 用法:GitHub → Releases → Draft a new release → Tag 填 `v0.1.0` → 把下面内容(
-> 从「## 下载」开始)粘进说明框 → 上传附件 `dist/DSchatpet-windows-x64.zip` → 发布。
+> 用法:GitHub → Releases → Draft a new release → Tag 填 `v0.2.0` → 把下面内容(
+> 从「## 下载」开始)粘进说明框 → 上传附件 `dist/DSchatpet-v0.2.0-windows-x64.zip` → 发布。
 
 ---
 
@@ -9,7 +9,7 @@
 
 | 文件 | 说明 |
 |---|---|
-| `DSchatpet-windows-x64.zip` | **免安装**:解压后双击 `DSWhalePet.exe` 即可,模型已在内 |
+| `DSchatpet-v0.2.0-windows-x64.zip` | **免安装**:解压后双击 `DSWhalePet.exe` 即可,模型已在内 |
 
 - 系统:Windows 10 / 11(64 位)。**不需要装 Python**。
 - 免安装、无需管理员权限;想开机自启在右键菜单里勾一下(写 HKCU,可随时取消)。
@@ -59,11 +59,11 @@
 ## 文件校验(可选)
 
 ```
-SHA256  DSchatpet-windows-x64.zip
+SHA256  DSchatpet-v0.2.0-windows-x64.zip
 235472091750F6EB171164DCF57AF3316520DF93C631CB8025D08034EF3975FE
 ```
 
-PowerShell 自查:`Get-FileHash .\DSchatpet-windows-x64.zip -Algorithm SHA256`
+PowerShell 自查:`Get-FileHash .\DSchatpet-v0.2.0-windows-x64.zip -Algorithm SHA256`
 
 ## 从源码跑
 
