@@ -160,8 +160,12 @@ class Config:
     chat_base_url: str = "https://api.deepseek.com"   # OpenAI 兼容接口
     chat_model: str = "deepseek-chat"
     chat_api_key: str = ""               # 直接填 key(明文存在本文件,注意别外传)
-    chat_api_key_env: str = "DEEPSEEK_API_KEY"
-    chat_use_dsh_credentials: bool = True   # 允许复用 ~/.dsh/.credentials.yaml 里的 key
+    #: ⚠️ Key **只由使用者自己在设置面板里填**。下面两项默认都关:
+    #: 环境变量对普通用户是隐形来源,``~/.dsh/.credentials.yaml`` 更是本机开发工具的
+    #: 凭据文件 —— 一个要免费分享出去的桌宠不该去读它们(用户要求"apikey 只应该自己填")。
+    #: 真要自动化(脚本/CI)时再手动在 config.json 里打开。
+    chat_api_key_env: str = ""
+    chat_use_dsh_credentials: bool = False
     chat_persona: str = ""               # 空 = 用 pet/chat.py 的内置人设
     chat_history: int = 10               # 记住最近几轮对话
     chat_timeout: float = 30.0

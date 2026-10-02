@@ -182,12 +182,19 @@ memory/                      ← 全部只在本机
 - **人设**内置在 `pet/chat.py`(`DEFAULT_PERSONA`),强调"回复要短、纯文本",
   因为气泡只有 320px 宽。想改人设就在 `config.json` 里填 `chat_persona`。
 
-### 配置 API Key(三种方式,任选其一)
+### 配置 API Key(只由你自己填)
 
-1. **复用 DSH 的凭据**(默认已开启):直接读 `~/.dsh/.credentials.yaml` 里的
-   `refs.DEEPSEEK_API_KEY` —— 你的 DSH 已经配好 key 的话,桌宠开箱即用,无需任何设置。
-2. **环境变量**:设置 `DEEPSEEK_API_KEY`(变量名可用 `chat_api_key_env` 改)。
-3. **直接填**:`config.json` 的 `chat_api_key`(明文存在本文件,注意别外传)。
+**程序不会自己去别处找 Key**:不读环境变量,也不读 `~/.dsh/.credentials.yaml` 之类的
+凭据文件 —— 一个要分享给别人的桌宠不该悄悄翻别人机器上的凭据。
+
+1. **在设置面板里填**:右键桌宠 →「设置…」→「对话」→ 粘贴你自己的 Key → 保存。
+2. **写进配置**:`config.json` 的 `chat_api_key`(明文存在这个文件里,注意别外传)。
+3. **完全不用 Key**:把接口地址改成本机服务(如 Ollama 的
+   `http://127.0.0.1:11434/v1` + `qwen2.5:7b`)—— 本机地址不需要 Key。
+
+想自动化(脚本/CI)时,可以在 `config.json` 里手动打开 `chat_api_key_env`
+(读环境变量)或 `chat_use_dsh_credentials`(读 DSH 凭据文件);这两个默认都是关的,
+也不在设置面板上。
 
 接口是 OpenAI 兼容协议,所以也能接中转站、Ollama 等:改 `chat_base_url` 与 `chat_model`
 即可(如 `http://127.0.0.1:11434/v1` + `qwen2.5:7b`)。
@@ -309,9 +316,9 @@ DS鲸鱼娘桌宠/
 | `chat_enabled` | true | 是否启用对话 |
 | `chat_base_url` | https://api.deepseek.com | OpenAI 兼容接口地址 |
 | `chat_model` | deepseek-chat | 模型名 |
-| `chat_api_key` | "" | 直接填 Key(明文,注意别外传) |
-| `chat_api_key_env` | DEEPSEEK_API_KEY | 从哪个环境变量读 Key |
-| `chat_use_dsh_credentials` | true | 允许复用 DSH 凭据文件里的 Key |
+| `chat_api_key` | "" | **Key 只由你自己填**(设置面板或这里;明文,注意别外传) |
+| `chat_api_key_env` | ""(关闭) | 从哪个环境变量读 Key。**默认关**,仅自动化场景手动打开 **(面板不可改)** |
+| `chat_use_dsh_credentials` | false | 读 `~/.dsh/.credentials.yaml` 里的 Key。**默认关**(分享出去的桌宠不该翻别人机器上的凭据文件)**(面板不可改)** |
 | `chat_persona` | "" | 空 = 用内置人设 |
 | `chat_history` | 10 | 记住最近几轮对话 |
 | `chat_timeout` | 30.0 | 请求超时(秒) |

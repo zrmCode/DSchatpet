@@ -153,9 +153,10 @@ class SettingsDialog(QDialog):
         self.chat_model = QLineEdit()
         self.chat_api_key = QLineEdit()
         self.chat_api_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.chat_api_key.setPlaceholderText("留空则用环境变量或 DSH 凭据")
-        self.chat_api_key_env = QLineEdit()
-        self.chat_use_dsh_credentials = QCheckBox("允许复用 DSH 凭据文件里的 Key")
+        #: ⚠️ Key 只认你自己填的这一处:程序**不会**去读环境变量,也不会去翻
+        #: ``~/.dsh/.credentials.yaml`` 之类的凭据文件(用户要求"apikey 只应该自己填";
+        #: 对分享出去的桌宠来说,悄悄读别人机器上的凭据文件也不合适)。
+        self.chat_api_key.setPlaceholderText("在这里粘贴你自己的 Key(不填就用本地模型)")
         self.chat_history = QSpinBox()
         self.chat_history.setRange(0, 50)
         self.chat_history.setSuffix(" 轮")
@@ -176,8 +177,8 @@ class SettingsDialog(QDialog):
         chat_form.addRow("接口地址", self.chat_base_url)
         chat_form.addRow("模型名", self.chat_model)
         chat_form.addRow("API Key", self.chat_api_key)
-        chat_form.addRow("Key 环境变量", self.chat_api_key_env)
-        chat_form.addRow("", self.chat_use_dsh_credentials)
+        chat_form.addRow("", _fixed_hint("Key 只由你自己填:程序不读环境变量、也不读别处的凭据文件。"
+                                         "完全不想用 Key 就把地址改成本机服务(Ollama)。"))
         chat_form.addRow("记忆轮数", self.chat_history)
         chat_form.addRow("请求超时", self.chat_timeout)
         chat_form.addRow("气泡停留", self.chat_bubble_seconds)
@@ -461,8 +462,6 @@ class SettingsDialog(QDialog):
         self.chat_base_url.setText(cfg.chat_base_url)
         self.chat_model.setText(cfg.chat_model)
         self.chat_api_key.setText(cfg.chat_api_key)
-        self.chat_api_key_env.setText(cfg.chat_api_key_env)
-        self.chat_use_dsh_credentials.setChecked(cfg.chat_use_dsh_credentials)
         #: ⚠️ 这里**只能回填已存在的那个复选框**。以前这一行是
         #: ``self.chat_hover = QCheckBox(...)`` —— 又新建了一个**没进任何布局**的控件,
         #: 于是用户在「对话」页看到的那个(建在 ``_build_ui`` 里、已 addRow 的)
@@ -520,8 +519,6 @@ class SettingsDialog(QDialog):
         cfg.chat_base_url = self.chat_base_url.text().strip()
         cfg.chat_model = self.chat_model.text().strip()
         cfg.chat_api_key = self.chat_api_key.text().strip()
-        cfg.chat_api_key_env = self.chat_api_key_env.text().strip()
-        cfg.chat_use_dsh_credentials = self.chat_use_dsh_credentials.isChecked()
         cfg.chat_history = self.chat_history.value()
         cfg.chat_timeout = self.chat_timeout.value()
         cfg.chat_bubble_seconds = self.chat_bubble_seconds.value()
